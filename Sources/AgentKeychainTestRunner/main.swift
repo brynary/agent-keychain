@@ -196,8 +196,7 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--description", "Day-to-day low-risk agent work",
         "--require-touch-id",
         "--allow-env-injection",
-        "--audit", "normal",
-        "--default-idle-timeout", "900"
+        "--audit", "normal"
     ], workingDirectory: workingDirectory)
     try expectEqual(regular.exitCode, 0, "regular role fixture")
 
@@ -208,8 +207,7 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose",
-        "--default-idle-timeout", "300"
+        "--audit", "verbose"
     ], workingDirectory: workingDirectory)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -220,8 +218,7 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose",
-        "--default-idle-timeout", "180"
+        "--audit", "verbose"
     ], workingDirectory: workingDirectory)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -329,8 +326,7 @@ func testRoleCreateListShowAndReasonRequirement() throws {
         "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose",
-        "--default-idle-timeout", "120"
+        "--audit", "verbose"
     ], workingDirectory: temp.url)
 
     try expectEqual(created.exitCode, 0, "role create exit code")
@@ -344,7 +340,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(analyst.requireReason, true, "analyst reason")
     try expectEqual(analyst.allowEnvInjection, false, "analyst env injection")
     try expectEqual(analyst.auditLevel, .verbose, "analyst audit")
-    try expectEqual(analyst.defaultIdleTimeoutSeconds, 120, "analyst idle timeout")
 
     let list = cli.run(["role", "list"], workingDirectory: temp.url)
     try expectEqual(list.exitCode, 0, "role list exit code")
@@ -352,8 +347,11 @@ func testRoleCreateListShowAndReasonRequirement() throws {
 
     let show = cli.run(["role", "show", "analyst"], workingDirectory: temp.url)
     try expectEqual(show.exitCode, 0, "role show exit code")
-    try expect(show.stdout.contains("\"description\":\"Reporting and read-only analytics\""), "role show description: \(show.stdout)")
-    try expect(show.stdout.contains("\"auditLevel\":\"verbose\""), "role show audit level: \(show.stdout)")
+    try expectEqual(
+        show.stdout,
+        "{\"allowEnvInjection\":false,\"auditLevel\":\"verbose\",\"description\":\"Reporting and read-only analytics\",\"requireReason\":true,\"requireTouchId\":true}\n",
+        "role show JSON"
+    )
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
     try expect(auditText.contains("\"event\":\"command_started\""), "audit should include command_started")
@@ -382,8 +380,7 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
         "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose",
-        "--default-idle-timeout", "240"
+        "--audit", "verbose"
     ], workingDirectory: temp.url)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
@@ -395,7 +392,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     try expectEqual(analyst.requireReason, true, "updated require reason")
     try expectEqual(analyst.allowEnvInjection, false, "updated deny env injection")
     try expectEqual(analyst.auditLevel, .verbose, "updated audit level")
-    try expectEqual(analyst.defaultIdleTimeoutSeconds, 240, "updated idle timeout")
 
     let setSecret = cli.run([
         "secret", "set", "analyst-token",

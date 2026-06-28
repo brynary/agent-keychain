@@ -255,27 +255,21 @@ Example:
       "description": "Day-to-day low-risk agent work",
       "requireReason": false,
       "requireTouchId": true,
-      "defaultIdleTimeoutSeconds": 900,
       "allowEnvInjection": true,
-      "requireDualApproval": false,
       "auditLevel": "normal"
     },
     "workspace-admin": {
       "description": "Identity and workspace administration",
       "requireReason": true,
       "requireTouchId": true,
-      "defaultIdleTimeoutSeconds": 300,
       "allowEnvInjection": false,
-      "requireDualApproval": false,
       "auditLevel": "verbose"
     },
     "finance": {
       "description": "Money movement and financial administration",
       "requireReason": true,
       "requireTouchId": true,
-      "defaultIdleTimeoutSeconds": 180,
       "allowEnvInjection": false,
-      "requireDualApproval": false,
       "auditLevel": "verbose"
     }
   },
@@ -600,8 +594,6 @@ Simple v0.1 behavior:
 * If the mountpoint is busy, do not forcibly detach. Log `volume lock skipped because busy` and leave the volume mounted.
 * True idle timeout based on browser or filesystem activity is deferred until a daemon/watch mode exists.
 
-The role field `defaultIdleTimeoutSeconds` may remain in config for forward compatibility, but v0.1 must not present it as an enforced control unless daemon/watch mode is implemented.
-
 ---
 
 # Browser Requirements
@@ -674,9 +666,7 @@ name: string
 description: string
 require_reason: boolean
 require_touch_id: boolean
-default_idle_timeout_seconds: integer
 allow_env_injection: boolean
-require_dual_approval: boolean
 audit_level: normal | verbose
 ```
 
@@ -691,31 +681,23 @@ regular:
   description: "Day-to-day low-risk agent work"
   require_reason: false
   require_touch_id: true
-  default_idle_timeout_seconds: 900
   allow_env_injection: true
-  require_dual_approval: false
   audit_level: normal
 
 workspace-admin:
   description: "Identity and workspace administration"
   require_reason: true
   require_touch_id: true
-  default_idle_timeout_seconds: 300
   allow_env_injection: false
-  require_dual_approval: false
   audit_level: verbose
 
 finance:
   description: "Money movement and financial administration"
   require_reason: true
   require_touch_id: true
-  default_idle_timeout_seconds: 180
   allow_env_injection: false
-  require_dual_approval: false
   audit_level: verbose
 ```
-
-Dual approval is part of the role model for future use, but v0.1 must not enable it in examples. Full dual-approval enforcement is deferred.
 
 ## Enforcement Rules
 
@@ -1439,7 +1421,6 @@ Implementation requirements:
 * True idle timeout enforcement without a foreground supervisor.
 * Full browser action audit.
 * OAuth broker implementation.
-* Dual approval implementation.
 * Global user-level credential store.
 
 ## Known Limitations
@@ -1500,7 +1481,6 @@ Defer:
 
 * ephemeral browser copies
 * brokered app tools
-* dual approval
 * true idle timeout enforcement
 * rich daemon/watch mode
 * UI app

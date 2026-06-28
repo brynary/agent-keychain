@@ -142,5 +142,4 @@ For high-risk roles, prefer:
 - A daemon or true idle-timeout watcher.
 - A tool gateway or MCP broker.
 - Full browser action audit.
-- Dual approval enforcement.
 - Protection from malware running as the user.

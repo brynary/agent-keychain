@@ -16,9 +16,7 @@ public struct RoleConfig: Codable, Equatable, Sendable {
     public var description: String
     public var requireReason: Bool
     public var requireTouchId: Bool
-    public var defaultIdleTimeoutSeconds: Int
     public var allowEnvInjection: Bool
-    public var requireDualApproval: Bool
     public var auditLevel: AuditLevel
 }
 

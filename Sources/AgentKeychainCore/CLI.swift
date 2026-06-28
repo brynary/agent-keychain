@@ -317,15 +317,12 @@ public struct AgentKeychainCLI {
         let oldHash = try config.canonicalHash()
         let description = options.value(for: "--description") ?? ""
         let auditLevel = AuditLevel(rawValue: options.value(for: "--audit") ?? "normal") ?? .normal
-        let idleTimeout = Int(options.value(for: "--default-idle-timeout") ?? "900") ?? 900
         let allowEnvInjection = options.hasFlag("--deny-env-injection") ? false : true
         config.roles[name] = RoleConfig(
             description: description,
             requireReason: options.hasFlag("--require-reason"),
             requireTouchId: options.hasFlag("--require-touch-id"),
-            defaultIdleTimeoutSeconds: idleTimeout,
             allowEnvInjection: options.hasFlag("--allow-env-injection") ? true : allowEnvInjection,
-            requireDualApproval: false,
             auditLevel: auditLevel
         )
         let newHash = try config.canonicalHash()
@@ -443,12 +440,6 @@ public struct AgentKeychainCLI {
                 throw AgentKeychainError.invalidArguments("Invalid audit level: \(audit)")
             }
             role.auditLevel = auditLevel
-        }
-        if let timeout = options.value(for: "--default-idle-timeout") {
-            guard let seconds = Int(timeout) else {
-                throw AgentKeychainError.invalidArguments("Invalid default idle timeout: \(timeout)")
-            }
-            role.defaultIdleTimeoutSeconds = seconds
         }
         if options.hasFlag("--require-touch-id") {
             role.requireTouchId = true

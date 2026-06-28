@@ -132,8 +132,7 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--description", "Day-to-day low-risk agent work",
         "--require-touch-id",
         "--allow-env-injection",
-        "--audit", "normal",
-        "--default-idle-timeout", "900"
+        "--audit", "normal"
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(regular.exitCode, 0, "regular role fixture")
 
@@ -144,8 +143,7 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose",
-        "--default-idle-timeout", "300"
+        "--audit", "verbose"
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -156,8 +154,7 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose",
-        "--default-idle-timeout", "180"
+        "--audit", "verbose"
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
