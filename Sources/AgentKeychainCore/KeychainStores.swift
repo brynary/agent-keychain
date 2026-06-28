@@ -2,7 +2,7 @@ import Foundation
 import LocalAuthentication
 import Security
 
-public final class MacOSKeychainStore: KeychainStoring, ProjectKeychainPreparing, ProjectKeychainContextSetting {
+public final class MacOSKeychainStore: KeychainStoring {
     private let account = "default"
     private var projectKeychainPath: String?
     private var projectKeychainPasswordService: String?

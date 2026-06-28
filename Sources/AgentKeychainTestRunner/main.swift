@@ -38,15 +38,27 @@ final class TemporaryDirectory {
 }
 
 final class RecordingKeychainStore: KeychainStoring {
+    struct ProjectKeychainCreation {
+        let path: String
+        let password: String
+    }
+
     struct ProjectPassword {
         let service: String
         let password: String
     }
 
+    var projectKeychainCreations: [ProjectKeychainCreation] = []
     var projectPasswords: [ProjectPassword] = []
     var secrets: [String: String] = [:]
     var deletedServices: [String] = []
     var failingReadServices: Set<String> = []
+
+    func createProjectKeychain(path: String, password: String) throws {
+        projectKeychainCreations.append(ProjectKeychainCreation(path: path, password: password))
+    }
+
+    func useProject(config: ProjectConfig, projectRoot: URL) throws {}
 
     func storeProjectKeychainPassword(service: String, password: String) throws {
         projectPasswords.append(ProjectPassword(service: service, password: password))
@@ -281,6 +293,9 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
     try expectEqual(config.project.keychainPath, ".agent-keychain/keychains/project.keychain-db", "keychain path")
     try expectEqual(config.project.keychainPasswordService, "agent-keychain.project.demo.keychain-password", "keychain password service")
 
+    try expectEqual(keychain.projectKeychainCreations.count, 1, "created project keychain count")
+    try expectEqual(keychain.projectKeychainCreations[0].path, projectDir.appendingPathComponent("keychains/project.keychain-db").path, "created project keychain path")
+    try expectEqual(keychain.projectKeychainCreations[0].password, "generated-project-keychain-password", "created project keychain password")
     try expectEqual(keychain.projectPasswords.count, 1, "stored project keychain password count")
     try expectEqual(keychain.projectPasswords[0].service, "agent-keychain.project.demo.keychain-password", "stored project password service")
     try expectEqual(keychain.projectPasswords[0].password, "generated-project-keychain-password", "stored generated project password")

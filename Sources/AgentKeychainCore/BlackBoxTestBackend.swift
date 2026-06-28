@@ -144,7 +144,7 @@ private final class BlackBoxStateStore {
     }
 }
 
-private final class BlackBoxKeychainStore: KeychainStoring, ProjectKeychainPreparing, ProjectKeychainContextSetting {
+private final class BlackBoxKeychainStore: KeychainStoring {
     private let store: BlackBoxStateStore
 
     init(store: BlackBoxStateStore) {

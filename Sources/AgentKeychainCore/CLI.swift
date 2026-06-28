@@ -148,23 +148,15 @@ public struct AgentKeychainCLI {
             projectName: projectName,
             projectRoot: workingDirectory.path
         )
-        if let preparer = dependencies.keychainStore as? ProjectKeychainPreparing {
-            let password = try dependencies.passwordGenerator.generatePassword()
-            try preparer.createProjectKeychain(
-                path: workingDirectory.appendingPathComponent(config.project.keychainPath).path,
-                password: password
-            )
-            try dependencies.keychainStore.storeProjectKeychainPassword(
-                service: config.project.keychainPasswordService,
-                password: password
-            )
-        } else {
-            let password = try dependencies.passwordGenerator.generatePassword()
-            try dependencies.keychainStore.storeProjectKeychainPassword(
-                service: config.project.keychainPasswordService,
-                password: password
-            )
-        }
+        let password = try dependencies.passwordGenerator.generatePassword()
+        try dependencies.keychainStore.createProjectKeychain(
+            path: workingDirectory.appendingPathComponent(config.project.keychainPath).path,
+            password: password
+        )
+        try dependencies.keychainStore.storeProjectKeychainPassword(
+            service: config.project.keychainPasswordService,
+            password: password
+        )
 
         try store.writeConfig(config)
 
@@ -1348,9 +1340,7 @@ public struct AgentKeychainCLI {
     }
 
     private func configureKeychainContext(config: ProjectConfig, workingDirectory: URL) throws {
-        if let contextual = dependencies.keychainStore as? ProjectKeychainContextSetting {
-            try contextual.useProject(config: config, projectRoot: workingDirectory)
-        }
+        try dependencies.keychainStore.useProject(config: config, projectRoot: workingDirectory)
     }
 
     private func attachAndVerifyVolume(name: String, metadata: VolumeMetadata, password: String, workingDirectory: URL) throws {

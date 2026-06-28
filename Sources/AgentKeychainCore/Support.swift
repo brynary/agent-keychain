@@ -26,6 +26,8 @@ public enum AgentKeychainError: Error, Equatable {
 }
 
 public protocol KeychainStoring: AnyObject {
+    func createProjectKeychain(path: String, password: String) throws
+    func useProject(config: ProjectConfig, projectRoot: URL) throws
     func storeProjectKeychainPassword(service: String, password: String) throws
     func storeGenericPassword(service: String, value: String) throws
     func readGenericPassword(service: String) throws -> String
@@ -34,14 +36,6 @@ public protocol KeychainStoring: AnyObject {
 
 public protocol SecretPrompting: AnyObject {
     func readSecret(prompt: String) throws -> String
-}
-
-public protocol ProjectKeychainPreparing: AnyObject {
-    func createProjectKeychain(path: String, password: String) throws
-}
-
-public protocol ProjectKeychainContextSetting: AnyObject {
-    func useProject(config: ProjectConfig, projectRoot: URL) throws
 }
 
 public protocol UserPresenceAuthorizing: AnyObject {
