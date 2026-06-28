@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+
+.agent-keychain/keychains/
+.agent-keychain/volumes/
+.agent-keychain/audit.jsonl
+.agent-keychain/config.integrity.json
+.agent-keychain/locks/
