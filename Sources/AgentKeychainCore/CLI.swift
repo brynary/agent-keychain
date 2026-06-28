@@ -316,13 +316,11 @@ public struct AgentKeychainCLI {
 
         let oldHash = try config.canonicalHash()
         let description = options.value(for: "--description") ?? ""
-        let auditLevel = AuditLevel(rawValue: options.value(for: "--audit") ?? "normal") ?? .normal
         let allowEnvInjection = options.hasFlag("--deny-env-injection") ? false : true
         config.roles[name] = RoleConfig(
             description: description,
             requireReason: options.hasFlag("--require-reason"),
-            allowEnvInjection: options.hasFlag("--allow-env-injection") ? true : allowEnvInjection,
-            auditLevel: auditLevel
+            allowEnvInjection: options.hasFlag("--allow-env-injection") ? true : allowEnvInjection
         )
         let newHash = try config.canonicalHash()
 
@@ -433,12 +431,6 @@ public struct AgentKeychainCLI {
         let oldHash = try config.canonicalHash()
         if let description = options.value(for: "--description") {
             role.description = description
-        }
-        if let audit = options.value(for: "--audit") {
-            guard let auditLevel = AuditLevel(rawValue: audit) else {
-                throw AgentKeychainError.invalidArguments("Invalid audit level: \(audit)")
-            }
-            role.auditLevel = auditLevel
         }
         if options.hasFlag("--require-reason") {
             role.requireReason = true
@@ -1476,7 +1468,7 @@ public struct AgentKeychainCLI {
     }
 
     private func defaultsToDetachOnExit(_ role: RoleConfig) -> Bool {
-        role.requireReason || !role.allowEnvInjection || role.auditLevel == .verbose
+        role.requireReason || !role.allowEnvInjection
     }
 
     private func runCommand(arguments: [String], workingDirectory: URL) throws -> CommandResult {

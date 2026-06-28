@@ -1,10 +1,5 @@
 import Foundation
 
-public enum AuditLevel: String, Codable, Equatable, Sendable {
-    case normal
-    case verbose
-}
-
 public struct ProjectInfo: Codable, Equatable, Sendable {
     public var name: String
     public var root: String
@@ -16,7 +11,6 @@ public struct RoleConfig: Codable, Equatable, Sendable {
     public var description: String
     public var requireReason: Bool
     public var allowEnvInjection: Bool
-    public var auditLevel: AuditLevel
 }
 
 public struct SecretMetadata: Codable, Equatable, Sendable {

@@ -131,7 +131,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--reason", "Create regular example role",
         "--description", "Day-to-day low-risk agent work",
         "--allow-env-injection",
-        "--audit", "normal"
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(regular.exitCode, 0, "regular role fixture")
 
@@ -141,7 +140,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--description", "Identity and workspace administration",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -151,7 +149,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--description", "Money movement and financial administration",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -294,7 +291,6 @@ func testRoleManagementCommands() throws {
         "--reason", "Create analyst role",
         "--description", "Analysis work",
         "--allow-env-injection",
-        "--audit", "normal"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(create.exitCode, 0, "role create exit code")
 
@@ -309,7 +305,6 @@ func testRoleManagementCommands() throws {
         "--reason", "Tighten analyst policy",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(update.exitCode, 0, "role update exit code")
 

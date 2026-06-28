@@ -195,7 +195,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--reason", "Create regular example role",
         "--description", "Day-to-day low-risk agent work",
         "--allow-env-injection",
-        "--audit", "normal"
     ], workingDirectory: workingDirectory)
     try expectEqual(regular.exitCode, 0, "regular role fixture")
 
@@ -205,7 +204,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--description", "Identity and workspace administration",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: workingDirectory)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -215,7 +213,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--description", "Money movement and financial administration",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: workingDirectory)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -322,7 +319,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
         "--description", "Reporting and read-only analytics",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: temp.url)
 
     try expectEqual(created.exitCode, 0, "role create exit code")
@@ -334,7 +330,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(analyst.description, "Reporting and read-only analytics", "analyst description")
     try expectEqual(analyst.requireReason, true, "analyst reason")
     try expectEqual(analyst.allowEnvInjection, false, "analyst env injection")
-    try expectEqual(analyst.auditLevel, .verbose, "analyst audit")
 
     let list = cli.run(["role", "list"], workingDirectory: temp.url)
     try expectEqual(list.exitCode, 0, "role list exit code")
@@ -344,7 +339,7 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(show.exitCode, 0, "role show exit code")
     try expectEqual(
         show.stdout,
-        "{\"allowEnvInjection\":false,\"auditLevel\":\"verbose\",\"description\":\"Reporting and read-only analytics\",\"requireReason\":true}\n",
+        "{\"allowEnvInjection\":false,\"description\":\"Reporting and read-only analytics\",\"requireReason\":true}\n",
         "role show JSON"
     )
 
@@ -374,7 +369,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
         "--description", "Read-only reporting",
         "--require-reason",
         "--deny-env-injection",
-        "--audit", "verbose"
     ], workingDirectory: temp.url)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
@@ -384,7 +378,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     try expectEqual(analyst.description, "Read-only reporting", "updated role description")
     try expectEqual(analyst.requireReason, true, "updated require reason")
     try expectEqual(analyst.allowEnvInjection, false, "updated deny env injection")
-    try expectEqual(analyst.auditLevel, .verbose, "updated audit level")
 
     let setSecret = cli.run([
         "secret", "set", "analyst-token",
