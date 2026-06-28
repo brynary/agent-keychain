@@ -64,42 +64,12 @@ public struct ProjectConfig: Codable, Equatable, Sendable {
                 keychainPath: ".agent-keychain/keychains/project.keychain-db",
                 keychainPasswordService: "agent-keychain.project.\(projectName).keychain-password"
             ),
-            roles: defaultRoles,
+            roles: [:],
             secrets: [:],
             volumes: [:],
             browsers: [:]
         )
     }
-
-    public static let defaultRoles: [String: RoleConfig] = [
-        "regular": RoleConfig(
-            description: "Day-to-day low-risk agent work",
-            requireReason: false,
-            requireTouchId: true,
-            defaultIdleTimeoutSeconds: 900,
-            allowEnvInjection: true,
-            requireDualApproval: false,
-            auditLevel: .normal
-        ),
-        "workspace-admin": RoleConfig(
-            description: "Identity and workspace administration",
-            requireReason: true,
-            requireTouchId: true,
-            defaultIdleTimeoutSeconds: 300,
-            allowEnvInjection: false,
-            requireDualApproval: false,
-            auditLevel: .verbose
-        ),
-        "finance": RoleConfig(
-            description: "Money movement and financial administration",
-            requireReason: true,
-            requireTouchId: true,
-            defaultIdleTimeoutSeconds: 180,
-            allowEnvInjection: false,
-            requireDualApproval: false,
-            auditLevel: .verbose
-        )
-    ]
 
     public func canonicalData() throws -> Data {
         try CanonicalJSON.encode(self)

@@ -68,7 +68,7 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing tests**
 
-Cover `init --project-name demo`, default roles, `.agent-keychain` layout, canonical config hash, integrity file, and audit events that never include secret values.
+Cover `init --project-name demo`, explicit example roles, `.agent-keychain` layout, canonical config hash, integrity file, and audit events that never include secret values.
 
 - [ ] **Step 2: Run tests to verify failure**
 

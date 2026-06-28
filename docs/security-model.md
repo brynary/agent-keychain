@@ -56,7 +56,9 @@ Fallback mode is recorded in:
 
 Roles are not hierarchical. They separate authority domains.
 
-Default roles:
+The CLI does not create roles by default. Define the roles each project needs with `agent-keychain role create`.
+
+Example role names:
 
 - `regular`
 - `workspace-admin`

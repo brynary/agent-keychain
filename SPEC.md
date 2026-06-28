@@ -211,7 +211,7 @@ Behavior:
 2. Create `.agent-keychain/`.
 3. Create `.agent-keychain/locks/`.
 4. Create `.agent-keychain/audit.jsonl`.
-5. Create `.agent-keychain/config.json`.
+5. Create `.agent-keychain/config.json` with empty roles, secrets, volumes, and browser profiles.
 6. Select the keychain storage backend.
 7. Prefer creating `.agent-keychain/keychains/project.keychain-db`.
 8. If the physical project keychain is unavailable on this host, enter explicit fallback keychain mode and record that mode in config, status output, and the audit log.
@@ -727,9 +727,9 @@ audit_level: normal | verbose
 
 There is no separate risk-level abstraction. The policy data lives directly on the role.
 
-## Default Roles
+## Example Roles
 
-Document these initial roles:
+`agent-keychain init` creates a project with no roles. Users define the roles their project needs. Documentation and examples may use roles like these:
 
 ```yaml
 regular:
@@ -760,7 +760,7 @@ finance:
   audit_level: verbose
 ```
 
-Dual approval is part of the role model for future use, but v0.1 must not enable it in default roles or examples. Full dual-approval enforcement is deferred.
+Dual approval is part of the role model for future use, but v0.1 must not enable it in examples. Full dual-approval enforcement is deferred.
 
 ## Enforcement Rules
 
@@ -771,7 +771,7 @@ The CLI must enforce:
 3. A browser profile can only be opened by a command running under its owning role.
 4. Roles can require a reason.
 5. Roles can disallow raw environment-variable injection.
-6. Regular/default roles must not be able to access privileged resources accidentally.
+6. Low-privilege roles must not be able to access privileged resources accidentally.
 7. Every privileged operation must create an audit event.
 8. Project resources cannot be read from outside the active project unless an explicit project path is provided.
 

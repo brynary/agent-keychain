@@ -125,9 +125,49 @@ func writeState(_ state: BlackBoxTestState, to stateURL: URL) throws {
     try state.save(to: stateURL)
 }
 
-func initializeProject(_ temp: TemporaryDirectory, stateURL: URL, name: String = "demo") throws {
+func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
+    let regular = try runAgentKeychain([
+        "role", "create", "regular",
+        "--reason", "Create regular example role",
+        "--description", "Day-to-day low-risk agent work",
+        "--require-touch-id",
+        "--allow-env-injection",
+        "--audit", "normal",
+        "--default-idle-timeout", "900"
+    ], workingDirectory: projectRoot, stateURL: stateURL)
+    try expectEqual(regular.exitCode, 0, "regular role fixture")
+
+    let workspaceAdmin = try runAgentKeychain([
+        "role", "create", "workspace-admin",
+        "--reason", "Create workspace admin example role",
+        "--description", "Identity and workspace administration",
+        "--require-touch-id",
+        "--require-reason",
+        "--deny-env-injection",
+        "--audit", "verbose",
+        "--default-idle-timeout", "300"
+    ], workingDirectory: projectRoot, stateURL: stateURL)
+    try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
+
+    let finance = try runAgentKeychain([
+        "role", "create", "finance",
+        "--reason", "Create finance example role",
+        "--description", "Money movement and financial administration",
+        "--require-touch-id",
+        "--require-reason",
+        "--deny-env-injection",
+        "--audit", "verbose",
+        "--default-idle-timeout", "180"
+    ], workingDirectory: projectRoot, stateURL: stateURL)
+    try expectEqual(finance.exitCode, 0, "finance role fixture")
+}
+
+func initializeProject(_ temp: TemporaryDirectory, stateURL: URL, name: String = "demo", createExampleRoles: Bool = true) throws {
     let result = try runAgentKeychain(["init", "--project-name", name], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(result.exitCode, 0, "init exit code")
+    if createExampleRoles {
+        try createExampleRolesFixture(projectRoot: temp.url, stateURL: stateURL)
+    }
 }
 
 func trustEditedConfig(projectRoot: URL, stateURL: URL, reason: String) throws {
@@ -167,7 +207,7 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
     let physical = try TemporaryDirectory()
     let physicalStateURL = physical.url.appendingPathComponent("state.json")
 
-    try initializeProject(physical, stateURL: physicalStateURL)
+    try initializeProject(physical, stateURL: physicalStateURL, createExampleRoles: false)
 
     let projectDir = physical.url.appendingPathComponent(".agent-keychain")
     try expect(FileManager.default.fileExists(atPath: projectDir.path), "init should create .agent-keychain")
@@ -175,7 +215,6 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
     try expect(FileManager.default.fileExists(atPath: projectDir.appendingPathComponent("config.integrity.json").path), "init should create integrity")
     let config = try readConfig(projectRoot: physical.url)
     try expectEqual(config.project.keychainMode, .physical, "physical init mode")
-    try expectEqual(Set(config.roles.keys), Set(["regular", "workspace-admin", "finance"]), "default roles")
 
     let state = try readState(physicalStateURL)
     try expectEqual(state.projectKeychainCreations.count, 1, "physical keychain creation count")
@@ -185,7 +224,6 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
     let status = try runAgentKeychain(["status"], workingDirectory: physical.url, stateURL: physicalStateURL)
     try expectEqual(status.exitCode, 0, "status exit code")
     try expectContains(status.stdout, "Keychain mode: physical", "physical status")
-    try expectContains(status.stdout, "Roles: finance, regular, workspace-admin", "status roles")
 
     let path = try runAgentKeychain(["config", "path"], workingDirectory: physical.url, stateURL: physicalStateURL)
     try expectEqual(path.stdout, configURL(projectRoot: physical.url).path + "\n", "config path stdout")
@@ -210,7 +248,7 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
     let fallback = try TemporaryDirectory()
     let fallbackStateURL = fallback.url.appendingPathComponent("state.json")
     try writeState(BlackBoxTestState(failPhysicalKeychainCreation: true), to: fallbackStateURL)
-    try initializeProject(fallback, stateURL: fallbackStateURL)
+    try initializeProject(fallback, stateURL: fallbackStateURL, createExampleRoles: false)
 
     let fallbackConfig = try readConfig(projectRoot: fallback.url)
     try expectEqual(fallbackConfig.project.keychainMode, .fallback, "fallback config mode")
@@ -269,7 +307,7 @@ func testConfigTrustAndCommandLifecycle() throws {
 func testRoleManagementCommands() throws {
     let temp = try TemporaryDirectory()
     let stateURL = temp.url.appendingPathComponent("state.json")
-    try initializeProject(temp, stateURL: stateURL)
+    try initializeProject(temp, stateURL: stateURL, createExampleRoles: false)
 
     let create = try runAgentKeychain([
         "role", "create", "analyst",

@@ -43,6 +43,16 @@ Initialize a project:
 agent-keychain init --project-name my-project
 ```
 
+Create the role or roles your project needs:
+
+```sh
+agent-keychain role create regular \
+  --reason "Create regular role for day-to-day agent work" \
+  --description "Day-to-day lower-risk work" \
+  --require-touch-id \
+  --allow-env-injection
+```
+
 Add a secret for regular agent work:
 
 ```sh
@@ -102,11 +112,13 @@ The repository ignores local keychains, volumes, locks, the audit log, and the i
 
 ## Roles
 
-The default roles are:
+`agent-keychain` does not create roles by default. Define role names and policy explicitly for each project.
+
+Example roles:
 
 - `regular`: day-to-day lower-risk work, with environment injection allowed.
-- `workspace-admin`: identity and workspace administration, with reasons required and environment injection denied by default.
-- `finance`: money movement and billing workflows, with reasons required and environment injection denied by default.
+- `workspace-admin`: identity and workspace administration, with reasons required and environment injection denied.
+- `finance`: money movement and billing workflows, with reasons required and environment injection denied.
 
 Roles own their own secrets, volumes, and browser profiles. A command running under one role cannot use another role's resources.
 

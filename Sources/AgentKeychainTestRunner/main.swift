@@ -202,6 +202,43 @@ final class RecordingUserPresenceAuthorizer: UserPresenceAuthorizing {
     }
 }
 
+func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) throws {
+    let regular = cli.run([
+        "role", "create", "regular",
+        "--reason", "Create regular example role",
+        "--description", "Day-to-day low-risk agent work",
+        "--require-touch-id",
+        "--allow-env-injection",
+        "--audit", "normal",
+        "--default-idle-timeout", "900"
+    ], workingDirectory: workingDirectory)
+    try expectEqual(regular.exitCode, 0, "regular role fixture")
+
+    let workspaceAdmin = cli.run([
+        "role", "create", "workspace-admin",
+        "--reason", "Create workspace admin example role",
+        "--description", "Identity and workspace administration",
+        "--require-touch-id",
+        "--require-reason",
+        "--deny-env-injection",
+        "--audit", "verbose",
+        "--default-idle-timeout", "300"
+    ], workingDirectory: workingDirectory)
+    try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
+
+    let finance = cli.run([
+        "role", "create", "finance",
+        "--reason", "Create finance example role",
+        "--description", "Money movement and financial administration",
+        "--require-touch-id",
+        "--require-reason",
+        "--deny-env-injection",
+        "--audit", "verbose",
+        "--default-idle-timeout", "180"
+    ], workingDirectory: workingDirectory)
+    try expectEqual(finance.exitCode, 0, "finance role fixture")
+}
+
 func makeInitializedCLI(
     at root: URL,
     keychain: RecordingKeychainStore = RecordingKeychainStore(),
@@ -209,7 +246,8 @@ func makeInitializedCLI(
     disk: DiskImageManaging = RecordingDiskImageStore(),
     browser: BrowserLaunching = RecordingBrowserLauncher(),
     commandRunner: CommandRunning = RecordingCommandRunner(),
-    authorizer: UserPresenceAuthorizing = RecordingUserPresenceAuthorizer()
+    authorizer: UserPresenceAuthorizing = RecordingUserPresenceAuthorizer(),
+    createExampleRoles: Bool = true
 ) throws -> AgentKeychainCLI {
     let cli = AgentKeychainCLI(dependencies: .testing(
         keychainStore: keychain,
@@ -223,6 +261,9 @@ func makeInitializedCLI(
     ))
     let result = cli.run(["init", "--project-name", "demo"], workingDirectory: root)
     try expectEqual(result.exitCode, 0, "init fixture exit code")
+    if createExampleRoles {
+        try createExampleRolesFixture(cli: cli, workingDirectory: root)
+    }
     return cli
 }
 
@@ -265,10 +306,6 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
     try expectEqual(config.project.keychainMode, .physical, "keychain mode")
     try expectEqual(config.project.keychainPath, ".agent-keychain/keychains/project.keychain-db", "keychain path")
     try expectEqual(config.project.keychainPasswordService, "agent-keychain.project.demo.keychain-password", "keychain password service")
-    try expectEqual(Set(config.roles.keys), Set(["regular", "workspace-admin", "finance"]), "default roles")
-    try expectEqual(config.roles["regular"]?.allowEnvInjection, true, "regular env injection default")
-    try expectEqual(config.roles["workspace-admin"]?.requireReason, true, "workspace-admin requires reason")
-    try expectEqual(config.roles["finance"]?.auditLevel, .verbose, "finance verbose audit")
 
     try expectEqual(keychain.projectPasswords.count, 1, "stored project keychain password count")
     try expectEqual(keychain.projectPasswords[0].service, "agent-keychain.project.demo.keychain-password", "stored project password service")
@@ -318,7 +355,7 @@ func testInitFallsBackWhenPhysicalProjectKeychainUnavailable() throws {
 
 func testRoleCreateListShowAndReasonRequirement() throws {
     let temp = try TemporaryDirectory()
-    let cli = try makeInitializedCLI(at: temp.url)
+    let cli = try makeInitializedCLI(at: temp.url, createExampleRoles: false)
 
     let missingReason = cli.run(["role", "create", "analyst"], workingDirectory: temp.url)
     try expectEqual(missingReason.exitCode, 2, "missing reason exit code")
@@ -351,7 +388,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     let list = cli.run(["role", "list"], workingDirectory: temp.url)
     try expectEqual(list.exitCode, 0, "role list exit code")
     try expect(list.stdout.contains("analyst\n"), "role list should include analyst: \(list.stdout)")
-    try expect(list.stdout.contains("regular\n"), "role list should include regular: \(list.stdout)")
 
     let show = cli.run(["role", "show", "analyst"], workingDirectory: temp.url)
     try expectEqual(show.exitCode, 0, "role show exit code")

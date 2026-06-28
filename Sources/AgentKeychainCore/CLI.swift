@@ -226,7 +226,8 @@ public struct AgentKeychainCLI {
 
     private func status(workingDirectory: URL) throws -> CommandResult {
         let config = try ConfigStore(projectRoot: workingDirectory).loadConfig()
-        let roles = config.roles.keys.sorted().joined(separator: ", ")
+        let roleNames = config.roles.keys.sorted()
+        let roles = roleNames.isEmpty ? "none" : roleNames.joined(separator: ", ")
         let volumeLines: [String]
         if config.volumes.isEmpty {
             volumeLines = ["Volumes: none"]
