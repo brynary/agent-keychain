@@ -194,7 +194,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "role", "create", "regular",
         "--reason", "Create regular example role",
         "--description", "Day-to-day low-risk agent work",
-        "--require-touch-id",
         "--allow-env-injection",
         "--audit", "normal"
     ], workingDirectory: workingDirectory)
@@ -204,7 +203,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "role", "create", "workspace-admin",
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
-        "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
         "--audit", "verbose"
@@ -215,7 +213,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "role", "create", "finance",
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
-        "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
         "--audit", "verbose"
@@ -323,7 +320,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
         "role", "create", "analyst",
         "--reason", "Create analyst role for reporting workflows",
         "--description", "Reporting and read-only analytics",
-        "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
         "--audit", "verbose"
@@ -336,7 +332,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     let config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role in config")
     try expectEqual(analyst.description, "Reporting and read-only analytics", "analyst description")
-    try expectEqual(analyst.requireTouchId, true, "analyst touch id")
     try expectEqual(analyst.requireReason, true, "analyst reason")
     try expectEqual(analyst.allowEnvInjection, false, "analyst env injection")
     try expectEqual(analyst.auditLevel, .verbose, "analyst audit")
@@ -349,7 +344,7 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(show.exitCode, 0, "role show exit code")
     try expectEqual(
         show.stdout,
-        "{\"allowEnvInjection\":false,\"auditLevel\":\"verbose\",\"description\":\"Reporting and read-only analytics\",\"requireReason\":true,\"requireTouchId\":true}\n",
+        "{\"allowEnvInjection\":false,\"auditLevel\":\"verbose\",\"description\":\"Reporting and read-only analytics\",\"requireReason\":true}\n",
         "role show JSON"
     )
 
@@ -377,7 +372,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
         "role", "update", "analyst",
         "--reason", "Tighten analyst role policy",
         "--description", "Read-only reporting",
-        "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
         "--audit", "verbose"
@@ -388,7 +382,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     var config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role after update")
     try expectEqual(analyst.description, "Read-only reporting", "updated role description")
-    try expectEqual(analyst.requireTouchId, true, "updated require touch id")
     try expectEqual(analyst.requireReason, true, "updated require reason")
     try expectEqual(analyst.allowEnvInjection, false, "updated deny env injection")
     try expectEqual(analyst.auditLevel, .verbose, "updated audit level")
@@ -397,7 +390,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
         "secret", "set", "analyst-token",
         "--role", "analyst",
         "--reason", "Add analyst token",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(setSecret.exitCode, 0, "role delete fixture secret")
 
@@ -489,7 +481,6 @@ func testHeldConfigLockAuditsSecretSetMutationFailure() throws {
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url)
 
     try expectEqual(result.exitCode, 1, "locked secret set exit code")
@@ -508,7 +499,6 @@ func testSecretSetGetListDeleteDoesNotLeakValues() throws {
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token for regular agent work",
-        "--touch-id"
     ], workingDirectory: temp.url)
 
     try expectEqual(set.exitCode, 0, "secret set exit code")
@@ -519,6 +509,10 @@ func testSecretSetGetListDeleteDoesNotLeakValues() throws {
     let configText = try String(contentsOf: configURL, encoding: .utf8)
     try expect(configText.contains(service), "config should contain keychain service metadata")
     try expect(!configText.contains("ghp_regular_secret"), "config must not contain secret value")
+    let config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
+    let metadata = try expectUnwrapped(config.secrets["github-readonly"], "expected github-readonly secret metadata")
+    let metadataText = String(decoding: try CanonicalJSON.encode(metadata), as: UTF8.self)
+    try expectEqual(metadataText, "{\"keychainService\":\"agent-keychain.role.regular.secret.github-readonly\",\"role\":\"regular\"}", "secret metadata JSON")
 
     let list = cli.run(["secret", "list", "--role", "regular"], workingDirectory: temp.url)
     try expectEqual(list.exitCode, 0, "secret list exit code")
@@ -558,7 +552,6 @@ func testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput() throws {
         "secret", "set", "mercury-api-key",
         "--role", "finance",
         "--reason", "Add Mercury API key for finance workflows",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(set.exitCode, 0, "finance secret set exit code")
 
@@ -614,7 +607,6 @@ func testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle() throws {
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(set.exitCode, 0, "project keychain audit fixture secret set")
 
@@ -640,7 +632,6 @@ func testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure()
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(set.exitCode, 0, "project keychain failure fixture secret set")
 
@@ -668,7 +659,6 @@ func testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle() throws 
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(set.exitCode, 0, "project keychain write fixture secret set")
 
@@ -696,7 +686,6 @@ func testVolumeCreateUnlockLockStatusAndRolePolicy() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
 
     try expectEqual(create.exitCode, 0, "volume create exit code")
@@ -715,6 +704,12 @@ func testVolumeCreateUnlockLockStatusAndRolePolicy() throws {
     try expectEqual(volume.image, ".agent-keychain/volumes/FinanceBrowser.sparsebundle", "volume image metadata")
     try expectEqual(volume.mountpoint, "/Volumes/AgentKeychain-demo-FinanceBrowser", "volume mountpoint")
     try expectEqual(volume.keychainService, service, "volume service metadata")
+    let volumeText = String(decoding: try CanonicalJSON.encode(volume), as: UTF8.self)
+    try expectEqual(
+        volumeText,
+        "{\"image\":\".agent-keychain/volumes/FinanceBrowser.sparsebundle\",\"keychainService\":\"agent-keychain.role.finance.volume.FinanceBrowser.password\",\"mountpoint\":\"/Volumes/AgentKeychain-demo-FinanceBrowser\",\"role\":\"finance\"}",
+        "volume metadata JSON"
+    )
 
     let crossRole = cli.run([
         "volume", "unlock", "FinanceBrowser",
@@ -779,7 +774,6 @@ func testVolumeLockSkipsDetachWhenMountpointBusy() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "busy fixture volume create")
 
@@ -815,7 +809,6 @@ func testVolumeLockAuditsDetachFailure() throws {
         "--role", "regular",
         "--size", "20g",
         "--reason", "Create regular browser volume",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "detach failure fixture volume")
 
@@ -843,7 +836,6 @@ func testBrowserOpenUsesManagedVolumeLockFile() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(createVolume.exitCode, 0, "lock fixture volume create")
     let createBrowser = cli.run([
@@ -889,7 +881,6 @@ func testVolumeUnlockFailsClosedWhenAttachDoesNotVerifyMountedImage() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "verify fixture volume create")
 
@@ -916,7 +907,6 @@ func testVolumeUnlockRejectsExistingMountpointThatIsNotExpectedImage() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "existing mountpoint fixture volume create")
 
@@ -954,7 +944,6 @@ func testVolumeUnlockRejectsSymlinkMountpoint() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "symlink mountpoint fixture volume create")
 
@@ -996,7 +985,6 @@ func testBrowserCreateOpenListAndRolePolicy() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(createVolume.exitCode, 0, "browser fixture volume create")
 
@@ -1059,7 +1047,6 @@ func testBrowserOpenRejectsProfilePathTraversal() throws {
         "--role", "regular",
         "--size", "20g",
         "--reason", "Create regular browser volume",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(createVolume.exitCode, 0, "profile traversal fixture volume")
 
@@ -1105,7 +1092,6 @@ func testPrivilegedBrowserAndRunDefaultToDetachOnExit() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(createVolume.exitCode, 0, "privileged detach fixture volume")
 
@@ -1150,7 +1136,6 @@ func testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(createVolume.exitCode, 0, "delete fixture volume create")
 
@@ -1258,7 +1243,6 @@ func testStatusReportsVolumeMountedState() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "status volume fixture create")
 
@@ -1324,7 +1308,6 @@ func testRunInjectsAllowedSecretAndAuditsCommand() throws {
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(set.exitCode, 0, "run fixture secret set")
 
@@ -1357,7 +1340,6 @@ func testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride() throws {
         "secret", "set", "mercury-api-key",
         "--role", "finance",
         "--reason", "Add Mercury API key",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(set.exitCode, 0, "run fixture finance secret set")
 
@@ -1419,7 +1401,6 @@ func testPolicyMutationsAndRawOverridesRequireUserPresence() throws {
         "secret", "set", "mercury-api-key",
         "--role", "finance",
         "--reason", "Add Mercury API key",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(secretSet.exitCode, 0, "authorized secret set")
     try expect(authorizer.reasons.contains("Add Mercury API key"), "secret set should require user presence")
@@ -1447,7 +1428,6 @@ func testRunBrowserLaunchesConfiguredBrowserAndDetaches() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create encrypted browser volume for finance sessions",
-        "--touch-id"
     ], workingDirectory: temp.url)
     try expectEqual(createVolume.exitCode, 0, "run browser fixture volume")
 

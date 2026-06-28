@@ -15,7 +15,6 @@ public struct ProjectInfo: Codable, Equatable, Sendable {
 public struct RoleConfig: Codable, Equatable, Sendable {
     public var description: String
     public var requireReason: Bool
-    public var requireTouchId: Bool
     public var allowEnvInjection: Bool
     public var auditLevel: AuditLevel
 }
@@ -23,7 +22,6 @@ public struct RoleConfig: Codable, Equatable, Sendable {
 public struct SecretMetadata: Codable, Equatable, Sendable {
     public var role: String
     public var keychainService: String
-    public var touchId: Bool
 }
 
 public struct VolumeMetadata: Codable, Equatable, Sendable {
@@ -31,7 +29,6 @@ public struct VolumeMetadata: Codable, Equatable, Sendable {
     public var image: String
     public var mountpoint: String
     public var keychainService: String
-    public var touchId: Bool
 }
 
 public struct BrowserMetadata: Codable, Equatable, Sendable {

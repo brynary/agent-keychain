@@ -130,7 +130,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "role", "create", "regular",
         "--reason", "Create regular example role",
         "--description", "Day-to-day low-risk agent work",
-        "--require-touch-id",
         "--allow-env-injection",
         "--audit", "normal"
     ], workingDirectory: projectRoot, stateURL: stateURL)
@@ -140,7 +139,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "role", "create", "workspace-admin",
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
-        "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
         "--audit", "verbose"
@@ -151,7 +149,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "role", "create", "finance",
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
-        "--require-touch-id",
         "--require-reason",
         "--deny-env-injection",
         "--audit", "verbose"
@@ -296,7 +293,6 @@ func testRoleManagementCommands() throws {
         "role", "create", "analyst",
         "--reason", "Create analyst role",
         "--description", "Analysis work",
-        "--require-touch-id",
         "--allow-env-injection",
         "--audit", "normal"
     ], workingDirectory: temp.url, stateURL: stateURL)
@@ -347,7 +343,6 @@ func testSecretCommandsAndPolicies() throws {
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL, secret: "ghp_black_box")
     try expectEqual(setRegular.exitCode, 0, "regular secret set")
 
@@ -364,7 +359,6 @@ func testSecretCommandsAndPolicies() throws {
         "secret", "set", "mercury-api-key",
         "--role", "finance",
         "--reason", "Add Mercury API key",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL, secret: "mercury_black_box")
     try expectEqual(setFinance.exitCode, 0, "finance secret set")
 
@@ -422,7 +416,6 @@ func testVolumeCommandsAndPolicies() throws {
         "--role", "regular",
         "--size", "20g",
         "--reason", "Create regular browser volume",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(create.exitCode, 0, "volume create")
 
@@ -501,7 +494,6 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
         "--role", "regular",
         "--size", "20g",
         "--reason", "Create regular browser volume",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(createVolume.exitCode, 0, "browser fixture volume")
     let mountpoint = temp.url.appendingPathComponent("mounts/RegularBrowser").path
@@ -561,7 +553,6 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
         "secret", "set", "github-readonly",
         "--role", "regular",
         "--reason", "Add GitHub token",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL, secret: "ghp_run_secret")
     try expectEqual(setRegular.exitCode, 0, "run fixture regular secret")
 
@@ -582,7 +573,6 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
         "secret", "set", "mercury-api-key",
         "--role", "finance",
         "--reason", "Add Mercury API key",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL, secret: "mercury_run_secret")
     try expectEqual(setFinance.exitCode, 0, "run fixture finance secret")
 
@@ -611,7 +601,6 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
         "--role", "finance",
         "--size", "20g",
         "--reason", "Create finance browser volume",
-        "--touch-id"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(createVolume.exitCode, 0, "run browser fixture volume")
     let mountpoint = temp.url.appendingPathComponent("mounts/FinanceBrowser").path

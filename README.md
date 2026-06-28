@@ -49,7 +49,6 @@ Create the role or roles your project needs:
 agent-keychain role create regular \
   --reason "Create regular role for day-to-day agent work" \
   --description "Day-to-day lower-risk work" \
-  --require-touch-id \
   --allow-env-injection
 ```
 
@@ -58,8 +57,7 @@ Add a secret for regular agent work:
 ```sh
 agent-keychain secret set github-readonly \
   --role regular \
-  --reason "Add GitHub token for regular agent work" \
-  --touch-id
+  --reason "Add GitHub token for regular agent work"
 ```
 
 Run an agent command with that secret injected:
@@ -77,8 +75,7 @@ Create an encrypted browser volume and profile:
 agent-keychain volume create RegularBrowser \
   --role regular \
   --size 20g \
-  --reason "Create encrypted browser volume for regular sessions" \
-  --touch-id
+  --reason "Create encrypted browser volume for regular sessions"
 ```
 
 ```sh
@@ -146,7 +143,7 @@ agent-keychain role delete NAME --reason TEXT
 Secret commands:
 
 ```sh
-agent-keychain secret set NAME --role ROLE --reason TEXT [--touch-id]
+agent-keychain secret set NAME --role ROLE --reason TEXT
 agent-keychain secret get NAME --role ROLE [--reason TEXT] [--allow-raw-secret]
 agent-keychain secret list [--role ROLE]
 agent-keychain secret delete NAME --role ROLE --reason TEXT
@@ -155,7 +152,7 @@ agent-keychain secret delete NAME --role ROLE --reason TEXT
 Volume commands:
 
 ```sh
-agent-keychain volume create NAME --role ROLE --size SIZE --reason TEXT [--path PATH] [--touch-id]
+agent-keychain volume create NAME --role ROLE --size SIZE --reason TEXT [--path PATH]
 agent-keychain volume unlock NAME --role ROLE [--reason TEXT]
 agent-keychain volume lock NAME --role ROLE
 agent-keychain volume status [NAME]

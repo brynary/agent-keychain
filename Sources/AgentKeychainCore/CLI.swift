@@ -284,7 +284,7 @@ public struct AgentKeychainCLI {
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-touch-id", "--require-reason", "--deny-env-injection", "--allow-env-injection"]
+            booleanFlags: ["--require-reason", "--deny-env-injection", "--allow-env-injection"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
         try dependencies.userPresenceAuthorizer.authorize(reason: reason)
@@ -321,7 +321,6 @@ public struct AgentKeychainCLI {
         config.roles[name] = RoleConfig(
             description: description,
             requireReason: options.hasFlag("--require-reason"),
-            requireTouchId: options.hasFlag("--require-touch-id"),
             allowEnvInjection: options.hasFlag("--allow-env-injection") ? true : allowEnvInjection,
             auditLevel: auditLevel
         )
@@ -421,7 +420,7 @@ public struct AgentKeychainCLI {
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-touch-id", "--no-touch-id", "--require-reason", "--no-require-reason", "--deny-env-injection", "--allow-env-injection"]
+            booleanFlags: ["--require-reason", "--no-require-reason", "--deny-env-injection", "--allow-env-injection"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
         try dependencies.userPresenceAuthorizer.authorize(reason: reason)
@@ -440,12 +439,6 @@ public struct AgentKeychainCLI {
                 throw AgentKeychainError.invalidArguments("Invalid audit level: \(audit)")
             }
             role.auditLevel = auditLevel
-        }
-        if options.hasFlag("--require-touch-id") {
-            role.requireTouchId = true
-        }
-        if options.hasFlag("--no-touch-id") {
-            role.requireTouchId = false
         }
         if options.hasFlag("--require-reason") {
             role.requireReason = true
@@ -526,9 +519,9 @@ public struct AgentKeychainCLI {
 
     private func secretSet(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain secret set NAME --role ROLE --reason TEXT [--touch-id]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain secret set NAME --role ROLE --reason TEXT")
         }
-        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()), booleanFlags: ["--touch-id"])
+        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
         guard let roleName = options.value(for: "--role") else {
             throw AgentKeychainError.invalidArguments("secret set requires --role")
         }
@@ -556,8 +549,7 @@ public struct AgentKeychainCLI {
 
         config.secrets[name] = SecretMetadata(
             role: roleName,
-            keychainService: service,
-            touchId: options.hasFlag("--touch-id")
+            keychainService: service
         )
         let newHash = try config.canonicalHash()
 
@@ -903,9 +895,9 @@ public struct AgentKeychainCLI {
 
     private func volumeCreate(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume create NAME --role ROLE --size SIZE --reason TEXT [--path PATH] [--touch-id]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume create NAME --role ROLE --size SIZE --reason TEXT [--path PATH]")
         }
-        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()), booleanFlags: ["--touch-id"])
+        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
         guard let roleName = options.value(for: "--role") else {
             throw AgentKeychainError.invalidArguments("volume create requires --role")
         }
@@ -951,8 +943,7 @@ public struct AgentKeychainCLI {
             role: roleName,
             image: relativeImage,
             mountpoint: mountpoint,
-            keychainService: service,
-            touchId: options.hasFlag("--touch-id")
+            keychainService: service
         )
         let newHash = try config.canonicalHash()
 
