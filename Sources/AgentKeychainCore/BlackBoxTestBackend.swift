@@ -47,7 +47,6 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
     public var browserLaunches: [BlackBoxBrowserLaunch]
     public var commandInvocations: [BlackBoxCommandInvocation]
     public var authorizations: [String]
-    public var failPhysicalKeychainCreation: Bool
     public var attachShouldLeaveUnmounted: Bool
     public var detachShouldFail: Bool
     public var commandExitCode: Int32
@@ -68,7 +67,6 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
         browserLaunches: [BlackBoxBrowserLaunch] = [],
         commandInvocations: [BlackBoxCommandInvocation] = [],
         authorizations: [String] = [],
-        failPhysicalKeychainCreation: Bool = false,
         attachShouldLeaveUnmounted: Bool = false,
         detachShouldFail: Bool = false,
         commandExitCode: Int32 = 0,
@@ -88,7 +86,6 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
         self.browserLaunches = browserLaunches
         self.commandInvocations = commandInvocations
         self.authorizations = authorizations
-        self.failPhysicalKeychainCreation = failPhysicalKeychainCreation
         self.attachShouldLeaveUnmounted = attachShouldLeaveUnmounted
         self.detachShouldFail = detachShouldFail
         self.commandExitCode = commandExitCode
@@ -156,9 +153,6 @@ private final class BlackBoxKeychainStore: KeychainStoring, ProjectKeychainPrepa
 
     func createProjectKeychain(path: String, password: String) throws {
         try store.update { state in
-            if state.failPhysicalKeychainCreation {
-                throw AgentKeychainError.filesystem("black-box physical keychain unavailable")
-            }
             state.projectKeychainCreations.append(BlackBoxProjectKeychainCreation(path: path, password: password))
         }
         try FileManager.default.createDirectory(

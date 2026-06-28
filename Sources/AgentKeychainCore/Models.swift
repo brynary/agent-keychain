@@ -1,10 +1,5 @@
 import Foundation
 
-public enum KeychainMode: String, Codable, Equatable, Sendable {
-    case physical
-    case fallback
-}
-
 public enum AuditLevel: String, Codable, Equatable, Sendable {
     case normal
     case verbose
@@ -13,7 +8,6 @@ public enum AuditLevel: String, Codable, Equatable, Sendable {
 public struct ProjectInfo: Codable, Equatable, Sendable {
     public var name: String
     public var root: String
-    public var keychainMode: KeychainMode
     public var keychainPath: String
     public var keychainPasswordService: String
 }
@@ -60,7 +54,6 @@ public struct ProjectConfig: Codable, Equatable, Sendable {
             project: ProjectInfo(
                 name: projectName,
                 root: projectRoot,
-                keychainMode: .physical,
                 keychainPath: ".agent-keychain/keychains/project.keychain-db",
                 keychainPasswordService: "agent-keychain.project.\(projectName).keychain-password"
             ),

@@ -188,7 +188,7 @@ agent-keychain run \
 
 ## Security Model
 
-See [docs/security-model.md](docs/security-model.md) for the detailed threat model, keychain modes, APFS volume rules, audit guarantees, and limitations.
+See [docs/security-model.md](docs/security-model.md) for the detailed threat model, project keychain storage, APFS volume rules, audit guarantees, and limitations.
 
 The short version:
 

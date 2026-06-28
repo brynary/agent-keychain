@@ -123,7 +123,7 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing tests**
 
-Cover `secret set/get/list/delete`, no secret values in config or audit, no raw secret stdout for roles with `allowEnvInjection: false` unless `--allow-raw-secret --reason TEXT` is supplied, and fallback service names scoped by project.
+Cover `secret set/get/list/delete`, no secret values in config or audit, no raw secret stdout for roles with `allowEnvInjection: false` unless `--allow-raw-secret --reason TEXT` is supplied, and project-keychain service names scoped by role/resource.
 
 - [ ] **Step 2: Run tests to verify failure**
 

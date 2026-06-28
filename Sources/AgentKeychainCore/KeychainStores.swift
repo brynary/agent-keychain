@@ -6,8 +6,6 @@ public final class MacOSKeychainStore: KeychainStoring, ProjectKeychainPreparing
     private let account = "default"
     private var projectKeychainPath: String?
     private var projectKeychainPasswordService: String?
-    private var keychainMode: KeychainMode = .physical
-    private var fallbackProjectName: String?
 
     public init() {}
 
@@ -31,8 +29,6 @@ public final class MacOSKeychainStore: KeychainStoring, ProjectKeychainPreparing
     }
 
     public func useProject(config: ProjectConfig, projectRoot: URL) throws {
-        keychainMode = config.project.keychainMode
-        fallbackProjectName = config.project.name
         projectKeychainPasswordService = config.project.keychainPasswordService
         projectKeychainPath = projectRoot.appendingPathComponent(config.project.keychainPath).path
     }
@@ -42,36 +38,21 @@ public final class MacOSKeychainStore: KeychainStoring, ProjectKeychainPreparing
     }
 
     public func storeGenericPassword(service: String, value: String) throws {
-        switch keychainMode {
-        case .physical:
-            try withUnlockedProjectKeychain { keychain in
-                try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
-                try addGenericPassword(service: service, value: value, keychain: keychain)
-            }
-        case .fallback:
-            try storeLoginKeychainItem(service: fallbackService(service), value: value, requireUserPresence: true)
+        try withUnlockedProjectKeychain { keychain in
+            try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
+            try addGenericPassword(service: service, value: value, keychain: keychain)
         }
     }
 
     public func readGenericPassword(service: String) throws -> String {
-        switch keychainMode {
-        case .physical:
-            return try withUnlockedProjectKeychain { keychain in
-                try readGenericPassword(service: service, keychain: keychain)
-            }
-        case .fallback:
-            return try readLoginKeychainItem(service: fallbackService(service), prompt: "Authenticate to read \(service)")
+        try withUnlockedProjectKeychain { keychain in
+            try readGenericPassword(service: service, keychain: keychain)
         }
     }
 
     public func deleteGenericPassword(service: String) throws {
-        switch keychainMode {
-        case .physical:
-            try withUnlockedProjectKeychain { keychain in
-                try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
-            }
-        case .fallback:
-            try deleteLoginKeychainItem(service: fallbackService(service))
+        try withUnlockedProjectKeychain { keychain in
+            try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
         }
     }
 
@@ -241,16 +222,6 @@ public final class MacOSKeychainStore: KeychainStoring, ProjectKeychainPreparing
                 throw AgentKeychainError.filesystem("Unable to delete project keychain item: \(securityMessage(deleteStatus))")
             }
         }
-    }
-
-    private func fallbackService(_ service: String) -> String {
-        guard let fallbackProjectName else {
-            return service
-        }
-        if service.hasPrefix("agent-keychain.project.") {
-            return service
-        }
-        return "agent-keychain.project.\(fallbackProjectName).\(service)"
     }
 
     private func securityMessage(_ status: OSStatus) -> String {

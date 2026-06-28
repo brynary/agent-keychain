@@ -32,7 +32,7 @@ This creates several risks:
 * Browser profiles encrypted at rest.
 * Touch ID required to unlock sensitive resources.
 * Role-based separation of duties, such as `regular`, `workspace-admin`, and `finance`.
-* A separate physical keychain per project when supported, with an explicit fallback keychain mode when modern macOS APIs cannot support the physical-keychain approach.
+* A separate physical keychain per project.
 * Project-local audit logs for every secret read, volume unlock, browser launch, policy mutation, and privileged action request.
 
 This does **not** fully solve runtime compromise. Once a volume is mounted or a secret is injected into a child process, that data is available to processes running as the user. The tool is an at-rest protection, workflow isolation, and auditability layer. Future work may add brokered tools so agents never receive raw privileged credentials.
@@ -212,13 +212,12 @@ Behavior:
 3. Create `.agent-keychain/locks/`.
 4. Create `.agent-keychain/audit.jsonl`.
 5. Create `.agent-keychain/config.json` with empty roles, secrets, volumes, and browser profiles.
-6. Select the keychain storage backend.
-7. Prefer creating `.agent-keychain/keychains/project.keychain-db`.
-8. If the physical project keychain is unavailable on this host, enter explicit fallback keychain mode and record that mode in config, status output, and the audit log.
+6. Generate a random high-entropy project keychain password.
+7. Create `.agent-keychain/keychains/project.keychain-db`.
+8. Store the project keychain password in the user’s login keychain with `userPresence` access control.
 9. Create `.agent-keychain/config.integrity.json` from the initial canonical config hash.
-10. Prompt the user to confirm keychain storage backend and password handling as applicable.
 
-In physical-keychain mode, because we want Touch ID convenience and do not want the user remembering another password, the project keychain password should be generated randomly and stored in the user’s login keychain with `userPresence` access control.
+Because we want Touch ID convenience and do not want the user remembering another password, the project keychain password should be generated randomly and stored in the user’s login keychain with `userPresence` access control.
 
 This creates two layers:
 
@@ -229,7 +228,7 @@ Touch ID
   -> reads project secrets / volume passwords from project.keychain-db
 ```
 
-In physical-keychain mode, the project keychain itself stores the project secrets. The login keychain stores only the generated password needed to unlock the project keychain. In fallback mode, project secrets and volume passwords are stored directly in the login keychain under the project-scoped fallback namespace.
+The project keychain itself stores the project secrets. The login keychain stores only the generated password needed to unlock the project keychain.
 
 ---
 
@@ -248,7 +247,6 @@ Example:
   "project": {
     "name": "qlty-local-agents",
     "root": "/Users/bryan/src/qlty-local-agents",
-    "keychainMode": "physical",
     "keychainPath": ".agent-keychain/keychains/project.keychain-db",
     "keychainPasswordService": "agent-keychain.project.qlty-local-agents.keychain-password"
   },
@@ -347,51 +345,30 @@ No secret values live in this file.
 
 # Project Keychain Storage
 
-## Primary Mode
-
-Prefer a **separate physical keychain**:
+Use a **separate physical keychain**:
 
 ```text
 .agent-keychain/keychains/project.keychain-db
 ```
 
-In physical-keychain mode, this project keychain stores:
+This project keychain stores:
 
 * API tokens
 * service credentials
 * APFS sparsebundle passwords
 * other project-specific agent secrets
 
-In physical-keychain mode, the user should not have to remember the project keychain password.
-
-## Fallback Mode
-
-If the macOS compatibility spike or host runtime checks show that a separate physical keychain is not viable, v0.1 may use an explicit fallback mode.
-
-Fallback mode stores the same logical project items in the user's login keychain under the project keychain namespace, with each sensitive item protected by `userPresence`. Fallback mode is acceptable v0.1 behavior only when:
-
-* the project config records that fallback mode is active
-* `agent-keychain status` reports that physical project-keychain separation is unavailable
-* the audit log records the fallback-mode decision during `init`
-* service names include the project identity and role/resource names
-* secret values and sparsebundle passwords still never live in config, process arguments, or logs
+The user should not have to remember the project keychain password.
 
 ## Project Keychain Password
 
-At `agent-keychain init` in physical-keychain mode:
+At `agent-keychain init`:
 
 1. Generate a random high-entropy project keychain password.
 2. Create `.agent-keychain/keychains/project.keychain-db`.
 3. Store the project keychain password in the user’s login keychain.
 4. Protect that login-keychain item with `userPresence`.
 5. Unlock the project keychain only after retrieving the project keychain password via Touch ID.
-
-At `agent-keychain init` in fallback mode:
-
-1. Generate no project keychain password.
-2. Store each project secret and volume password directly in the login keychain using the project-scoped fallback namespace.
-3. Protect each sensitive fallback item with `userPresence`.
-4. Record fallback mode in config, status, and audit output.
 
 Login keychain item:
 
@@ -418,7 +395,7 @@ value: <random sparsebundle password>
 
 ## Keychain Unlock Flow
 
-For any operation requiring project secrets in physical-keychain mode:
+For any operation requiring project secrets:
 
 ```text
 1. Read project keychain password from login keychain.
@@ -428,17 +405,9 @@ For any operation requiring project secrets in physical-keychain mode:
 5. Optionally lock the project keychain again after use.
 ```
 
-For any operation requiring project secrets in fallback mode:
-
-```text
-1. Read the requested project-scoped fallback item from the login keychain.
-2. This triggers Touch ID / user-presence for that item.
-3. Use the secret or volume password for the requested operation.
-```
-
 ## Project Keychain Timeout
 
-In physical-keychain mode, the project keychain should support timeout locking.
+The project keychain should support timeout locking.
 
 Default behavior:
 
@@ -452,7 +421,7 @@ For longer operations such as `run` or `browser open`, support:
 agent-keychain run --keychain-timeout 5m ...
 ```
 
-In physical-keychain mode, the project keychain should be locked on exit via a `defer` / cleanup handler.
+The project keychain should be locked on exit via a `defer` / cleanup handler.
 
 ## macOS Keychain Compatibility Spike
 
@@ -465,9 +434,7 @@ The spike must verify:
 * `SecItemAdd`, `SecItemCopyMatching`, and `SecItemDelete` behavior with a non-login keychain
 * whether project-keychain items require explicit search-list or keychain-reference handling
 * whether per-item `userPresence` works reliably in the project keychain
-* whether the `/usr/bin/security` CLI can provide a reliable fallback for create, unlock, lock, add, read, and delete operations
-
-If custom physical keychains are not viable with modern macOS APIs, keep the v0.1 security model intact by falling back to a login-keychain storage namespace that includes the project identity and role/resource names, with all sensitive items protected by `userPresence`. In that fallback mode, update the project status output and audit log to state that physical project-keychain separation is unavailable on the current host.
+* whether the `/usr/bin/security` CLI can provide a reliable alternate implementation for create, unlock, lock, add, read, and delete operations
 
 Spike result on the current host:
 
@@ -476,10 +443,10 @@ Spike result on the current host:
 * `SecItemAdd` can write generic password items to the non-login keychain when passed the explicit keychain reference.
 * `SecItemCopyMatching` can read those items when passed an explicit `kSecMatchSearchList`.
 * `SecItemDelete` can delete those items when passed an explicit `kSecMatchSearchList`.
-* These APIs work but produce deprecation warnings for `SecKeychain` APIs. v0.1 may still use them, with `/usr/bin/security` as fallback.
+* These APIs work but produce deprecation warnings for `SecKeychain` APIs. v0.1 may still use them, with `/usr/bin/security` as an alternate implementation if needed.
 * `SecItemAdd` with `kSecAttrAccessControl` and `.userPresence` against the non-login keychain failed with `errSecParam`. v0.1 must not rely on per-item `userPresence` inside the physical project keychain.
 
-Conclusion for this host: use physical-keychain mode for v0.1. Keep fallback mode in the design for hosts where the same compatibility checks fail.
+Conclusion for this host: use the physical project keychain for v0.1.
 
 ---
 
@@ -501,7 +468,7 @@ and:
 
 Use a fresh `LAContext` per sensitive read.
 
-Inside the project keychain, per-item Touch ID is not required for v0.1. The current host spike found that adding a `.userPresence` access-control item to a non-login keychain fails with `errSecParam`. The required security boundary in physical-keychain mode is:
+Inside the project keychain, per-item Touch ID is not required for v0.1. The current host spike found that adding a `.userPresence` access-control item to a non-login keychain fails with `errSecParam`. The required security boundary is:
 
 ```text
 Touch ID gates unlocking the project keychain.
@@ -510,15 +477,11 @@ The project keychain physically separates project secrets from the user’s logi
 
 Enforce Touch ID at project keychain unlock time by retrieving the generated project keychain password from the login keychain with `userPresence`.
 
-In fallback mode, there is no physical separation from the login keychain. The required boundary is project-scoped item naming plus per-item `userPresence` on each sensitive item.
-
 ## `--touch-id` Flag Semantics
 
 The `--touch-id` flag marks a secret or volume password as requiring user-presence before use.
 
-In physical-keychain mode, `--touch-id` does not mean per-item Touch ID inside `project.keychain-db`. v0.1 gates access by requiring Touch ID to retrieve the project keychain password from the login keychain, then unlocking the physical project keychain for the operation.
-
-In fallback mode, `--touch-id` means the fallback login-keychain item itself must be stored with per-item `userPresence`.
+`--touch-id` does not mean per-item Touch ID inside `project.keychain-db`. v0.1 gates access by requiring Touch ID to retrieve the project keychain password from the login keychain, then unlocking the physical project keychain for the operation.
 
 ## Secret Keychain Item Naming
 
@@ -530,7 +493,7 @@ account: default
 value: <secret value>
 ```
 
-In physical-keychain mode, these service names live inside the physical project keychain. In fallback mode, prefix service names with the project identity so fallback items are project-scoped inside the login keychain.
+These service names live inside the physical project keychain.
 
 Examples:
 
@@ -550,7 +513,7 @@ account: default
 value: <random sparsebundle password>
 ```
 
-In physical-keychain mode, these service names live inside the physical project keychain. In fallback mode, prefix service names with the project identity so fallback items are project-scoped inside the login keychain.
+These service names live inside the physical project keychain.
 
 Examples:
 
@@ -1221,8 +1184,7 @@ Config mutations should go through `ConfigStore`; callers should not edit `confi
 
 Responsibilities:
 
-* in physical-keychain mode, store and retrieve the generated project keychain password
-* in fallback mode, store and retrieve project-scoped fallback secret and volume-password items
+* store and retrieve the generated project keychain password
 * require Touch ID / user-presence to retrieve sensitive items
 * use `ThisDeviceOnly`
 
@@ -1294,21 +1256,21 @@ func readProjectKeychainPassword(service: String, prompt: String) throws -> Stri
 
 Responsibilities:
 
-* in physical-keychain mode, create the project keychain
-* in physical-keychain mode, unlock the project keychain using generated password
-* in physical-keychain mode, lock the project keychain
-* in physical-keychain mode, store generic password items in project keychain
-* in physical-keychain mode, read generic password items from project keychain
-* in physical-keychain mode, delete generic password items from project keychain
+* create the project keychain
+* unlock the project keychain using generated password
+* lock the project keychain
+* store generic password items in project keychain
+* read generic password items from project keychain
+* delete generic password items from project keychain
 
 Implementation options:
 
 * Use Security framework APIs where possible.
-* Use `/usr/bin/security` as a fallback if direct APIs are awkward for non-login keychains.
+* Use `/usr/bin/security` as an alternate implementation if direct APIs are awkward for non-login keychains.
 * Keep all use of the keychain password in memory only.
 * Never print the keychain password.
 
-In physical-keychain mode, the project keychain should be locked on command exit unless a longer-lived command requires it.
+The project keychain should be locked on command exit unless a longer-lived command requires it.
 
 ## Disk Image Store
 
@@ -1459,10 +1421,9 @@ Implementation requirements:
 ## Must-Haves
 
 * Project-scoped config and state.
-* Physical project keychain as the primary storage mode, with explicit fallback keychain mode allowed when the compatibility spike or host runtime checks show physical keychains are not viable.
-* In physical-keychain mode, project keychain password generated by the tool, not memorized by the user.
-* In physical-keychain mode, project keychain password stored in login keychain with Touch ID / `userPresence`.
-* In fallback mode, project secrets and volume passwords stored directly in the login keychain under project-scoped service names with per-item `userPresence`.
+* Physical project keychain for project secrets and volume passwords.
+* Project keychain password generated by the tool, not memorized by the user.
+* Project keychain password stored in login keychain with Touch ID / `userPresence`.
 * No secret values in config.
 * No disk-image passwords in config.
 * No passwords or tokens in process arguments.
@@ -1474,7 +1435,7 @@ Implementation requirements:
 * Roles can require a reason.
 * Roles can deny raw environment-variable injection.
 * Privileged browser and run workflows should default to `--detach-on-exit` until true idle timeout enforcement exists.
-* In physical-keychain mode, project keychain locked on command exit unless explicitly kept open for a managed run.
+* Project keychain locked on command exit unless explicitly kept open for a managed run.
 
 ## Non-Goals for v0.1
 
@@ -1532,8 +1493,8 @@ agent-keychain run
 Required v0.1 behavior:
 
 * Project-local `.agent-keychain` directory.
-* Physical project keychain as the primary storage mode, or explicit fallback keychain mode when physical keychains are unavailable.
-* Touch-ID-gated access to the physical project keychain password or fallback secret item.
+* Physical project keychain for project secrets and volume passwords.
+* Touch-ID-gated access to the physical project keychain password.
 * Role-based resource ownership.
 * Encrypted APFS sparsebundle creation.
 * Volume unlock/lock.

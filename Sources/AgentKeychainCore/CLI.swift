@@ -144,28 +144,20 @@ public struct AgentKeychainCLI {
 
         try store.createProjectDirectories()
 
-        var config = ProjectConfig.defaultConfig(
+        let config = ProjectConfig.defaultConfig(
             projectName: projectName,
             projectRoot: workingDirectory.path
         )
-        var fallbackMessage: String?
         if let preparer = dependencies.keychainStore as? ProjectKeychainPreparing {
             let password = try dependencies.passwordGenerator.generatePassword()
-            do {
-                try preparer.createProjectKeychain(
-                    path: workingDirectory.appendingPathComponent(config.project.keychainPath).path,
-                    password: password
-                )
-                try dependencies.keychainStore.storeProjectKeychainPassword(
-                    service: config.project.keychainPasswordService,
-                    password: password
-                )
-            } catch {
-                config.project.keychainMode = .fallback
-                config.project.keychainPath = ""
-                config.project.keychainPasswordService = ""
-                fallbackMessage = "Physical project-keychain separation unavailable: \(error)"
-            }
+            try preparer.createProjectKeychain(
+                path: workingDirectory.appendingPathComponent(config.project.keychainPath).path,
+                password: password
+            )
+            try dependencies.keychainStore.storeProjectKeychainPassword(
+                service: config.project.keychainPasswordService,
+                password: password
+            )
         } else {
             let password = try dependencies.passwordGenerator.generatePassword()
             try dependencies.keychainStore.storeProjectKeychainPassword(
@@ -193,16 +185,6 @@ public struct AgentKeychainCLI {
             result: "success",
             message: "Initialized agent-keychain project"
         ))
-        if let fallbackMessage {
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "fallback_keychain_mode_selected",
-                result: "success",
-                message: fallbackMessage
-            ))
-        }
         try audit.append(AuditEvent(
             timestamp: dependencies.clock.now(),
             runID: runID,
@@ -243,24 +225,10 @@ public struct AgentKeychainCLI {
                 }
         }
         let browsers = config.browsers.keys.sorted()
-        let keychainLines: [String]
-        switch config.project.keychainMode {
-        case .physical:
-            keychainLines = [
-                "Keychain mode: physical",
-                "Project keychain: configured"
-            ]
-        case .fallback:
-            keychainLines = [
-                "Keychain mode: fallback",
-                "Physical project-keychain separation: unavailable",
-                "Project keychain: fallback login-keychain namespace"
-            ]
-        }
         let stdout = ([
             "Project: \(config.project.name)",
-            "Root: \(config.project.root)"
-        ] + keychainLines + [
+            "Root: \(config.project.root)",
+            "Project keychain: configured",
             "Roles: \(roles)"
         ] + volumeLines + [
             "Browsers: \(browsers.isEmpty ? "none" : browsers.joined(separator: ", "))"
@@ -588,7 +556,7 @@ public struct AgentKeychainCLI {
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
         _ = try PolicyEngine.requireRole(config, roleName)
         let oldHash = try config.canonicalHash()
-        let service = secretService(config: config, role: roleName, name: name)
+        let service = secretService(role: roleName, name: name)
         let value = try dependencies.secretPrompt.readSecret(prompt: "Secret value for \(name)")
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
@@ -925,14 +893,8 @@ public struct AgentKeychainCLI {
         }
     }
 
-    private func secretService(config: ProjectConfig, role: String, name: String) -> String {
-        let base = "agent-keychain.role.\(role).secret.\(name)"
-        switch config.project.keychainMode {
-        case .physical:
-            return base
-        case .fallback:
-            return "agent-keychain.project.\(config.project.name).\(base)"
-        }
+    private func secretService(role: String, name: String) -> String {
+        "agent-keychain.role.\(role).secret.\(name)"
     }
 
     private func volume(arguments: [String], workingDirectory: URL) throws -> CommandResult {
@@ -980,7 +942,7 @@ public struct AgentKeychainCLI {
         let relativeImage = options.value(for: "--path") ?? ".agent-keychain/volumes/\(name).sparsebundle"
         let imagePath = absoluteProjectPath(workingDirectory: workingDirectory, path: relativeImage)
         let mountpoint = "/Volumes/AgentKeychain-\(sanitizeProjectName(config.project.name))-\(name)"
-        let service = volumeService(config: config, role: roleName, name: name)
+        let service = volumeService(role: roleName, name: name)
         let password = try dependencies.passwordGenerator.generatePassword()
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
@@ -1374,14 +1336,8 @@ public struct AgentKeychainCLI {
         return userDataURL.path
     }
 
-    private func volumeService(config: ProjectConfig, role: String, name: String) -> String {
-        let base = "agent-keychain.role.\(role).volume.\(name).password"
-        switch config.project.keychainMode {
-        case .physical:
-            return base
-        case .fallback:
-            return "agent-keychain.project.\(config.project.name).\(base)"
-        }
+    private func volumeService(role: String, name: String) -> String {
+        "agent-keychain.role.\(role).volume.\(name).password"
     }
 
     private func absoluteProjectPath(workingDirectory: URL, path: String) -> String {
@@ -1486,70 +1442,63 @@ public struct AgentKeychainCLI {
         reason: String?,
         operation: () throws -> T
     ) throws -> T {
-        let shouldAuditProjectKeychain = config.project.keychainMode == .physical
-        if shouldAuditProjectKeychain {
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: runID,
+            project: config.project.name,
+            event: "project_keychain_unlock_requested",
+            result: "success",
+            role: role,
+            resource: resource,
+            reason: reason
+        ))
+
+        do {
+            let value = try operation()
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
                 runID: runID,
                 project: config.project.name,
-                event: "project_keychain_unlock_requested",
+                event: "project_keychain_unlock_succeeded",
                 result: "success",
                 role: role,
                 resource: resource,
                 reason: reason
             ))
-        }
-
-        do {
-            let value = try operation()
-            if shouldAuditProjectKeychain {
-                try audit.append(AuditEvent(
-                    timestamp: dependencies.clock.now(),
-                    runID: runID,
-                    project: config.project.name,
-                    event: "project_keychain_unlock_succeeded",
-                    result: "success",
-                    role: role,
-                    resource: resource,
-                    reason: reason
-                ))
-                try audit.append(AuditEvent(
-                    timestamp: dependencies.clock.now(),
-                    runID: runID,
-                    project: config.project.name,
-                    event: "project_keychain_locked",
-                    result: "success",
-                    role: role,
-                    resource: resource,
-                    reason: reason
-                ))
-            }
+            try audit.append(AuditEvent(
+                timestamp: dependencies.clock.now(),
+                runID: runID,
+                project: config.project.name,
+                event: "project_keychain_locked",
+                result: "success",
+                role: role,
+                resource: resource,
+                reason: reason
+            ))
             return value
         } catch {
-            if shouldAuditProjectKeychain {
-                try? audit.append(AuditEvent(
-                    timestamp: dependencies.clock.now(),
-                    runID: runID,
-                    project: config.project.name,
-                    event: "project_keychain_unlock_failed",
-                    result: "failed",
-                    role: role,
-                    resource: resource,
-                    reason: reason,
-                    message: "\(error)"
-                ))
-                try? audit.append(AuditEvent(
-                    timestamp: dependencies.clock.now(),
-                    runID: runID,
-                    project: config.project.name,
-                    event: "command_failed",
-                    result: "failed",
-                    role: role,
-                    resource: resource,
-                    reason: reason,
-                    message: "\(error)"
-                ))
-            }
+            try? audit.append(AuditEvent(
+                timestamp: dependencies.clock.now(),
+                runID: runID,
+                project: config.project.name,
+                event: "project_keychain_unlock_failed",
+                result: "failed",
+                role: role,
+                resource: resource,
+                reason: reason,
+                message: "\(error)"
+            ))
+            try? audit.append(AuditEvent(
+                timestamp: dependencies.clock.now(),
+                runID: runID,
+                project: config.project.name,
+                event: "command_failed",
+                result: "failed",
+                role: role,
+                resource: resource,
+                reason: reason,
+                message: "\(error)"
+            ))
             throw error
         }
     }

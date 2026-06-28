@@ -72,31 +72,6 @@ final class RecordingKeychainStore: KeychainStoring {
     }
 }
 
-final class FailingPhysicalKeychainStore: KeychainStoring, ProjectKeychainPreparing {
-    var projectPasswords: [String] = []
-    var secrets: [String: String] = [:]
-
-    func createProjectKeychain(path: String, password: String) throws {
-        throw AgentKeychainError.filesystem("physical keychain unavailable in test")
-    }
-
-    func storeProjectKeychainPassword(service: String, password: String) throws {
-        projectPasswords.append(password)
-    }
-
-    func storeGenericPassword(service: String, value: String) throws {
-        secrets[service] = value
-    }
-
-    func readGenericPassword(service: String) throws -> String {
-        secrets[service] ?? ""
-    }
-
-    func deleteGenericPassword(service: String) throws {
-        secrets.removeValue(forKey: service)
-    }
-}
-
 final class QueueSecretPrompt: SecretPrompting {
     var values: [String]
 
@@ -303,7 +278,6 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
 
     let config = try JSONDecoder().decode(ProjectConfig.self, from: configData)
     try expectEqual(config.project.name, "demo", "project name")
-    try expectEqual(config.project.keychainMode, .physical, "keychain mode")
     try expectEqual(config.project.keychainPath, ".agent-keychain/keychains/project.keychain-db", "keychain path")
     try expectEqual(config.project.keychainPasswordService, "agent-keychain.project.demo.keychain-password", "keychain password service")
 
@@ -323,34 +297,6 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
     try expect(!auditText.contains("generated-project-keychain-password"), "audit must not contain generated project keychain password")
     try expect(auditText.contains("\"previous_hash\""), "audit should include hash chain previous hash")
     try expect(auditText.contains("\"entry_hash\""), "audit should include hash chain entry hash")
-}
-
-func testInitFallsBackWhenPhysicalProjectKeychainUnavailable() throws {
-    let temp = try TemporaryDirectory()
-    let keychain = FailingPhysicalKeychainStore()
-    let cli = AgentKeychainCLI(dependencies: .testing(
-        keychainStore: keychain,
-        secretPrompt: QueueSecretPrompt([]),
-        diskImageStore: RecordingDiskImageStore(),
-        browserLauncher: RecordingBrowserLauncher(),
-        commandRunner: RecordingCommandRunner(),
-        userPresenceAuthorizer: RecordingUserPresenceAuthorizer(),
-        randomPassword: "unused-project-password",
-        now: ISO8601DateFormatter().date(from: "2026-06-28T16:40:11Z")!
-    ))
-
-    let result = cli.run(["init", "--project-name", "demo"], workingDirectory: temp.url)
-
-    try expectEqual(result.exitCode, 0, "fallback init exit code")
-    let config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: temp.url.appendingPathComponent(".agent-keychain/config.json")))
-    try expectEqual(config.project.keychainMode, .fallback, "fallback keychain mode")
-    try expect(keychain.projectPasswords.isEmpty, "fallback mode must not store a project keychain password")
-    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    try expect(auditText.contains("\"event\":\"fallback_keychain_mode_selected\""), "audit should record fallback decision")
-
-    let status = cli.run(["status"], workingDirectory: temp.url)
-    try expectEqual(status.exitCode, 0, "fallback status exit code")
-    try expect(status.stdout.contains("Physical project-keychain separation: unavailable"), "fallback status should explain unavailable physical separation: \(status.stdout)")
 }
 
 func testRoleCreateListShowAndReasonRequirement() throws {
@@ -1247,7 +1193,6 @@ func testStatusConfigPathProjectDiscoveryAndTrustCurrent() throws {
     let status = cli.run(["status"], workingDirectory: temp.url)
     try expectEqual(status.exitCode, 0, "status exit code")
     try expect(status.stdout.contains("Project: demo"), "status project: \(status.stdout)")
-    try expect(status.stdout.contains("Keychain mode: physical"), "status keychain mode: \(status.stdout)")
     try expect(status.stdout.contains("Project keychain: configured"), "status keychain state: \(status.stdout)")
     try expect(status.stdout.contains("Roles: finance, regular, workspace-admin"), "status roles: \(status.stdout)")
 
@@ -1530,7 +1475,6 @@ func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
 let tests: [(String, () throws -> Void)] = [
     ("testCLITypeExists", testCLITypeExists),
     ("testInitCreatesProjectLayoutConfigIntegrityAndAudit", testInitCreatesProjectLayoutConfigIntegrityAndAudit),
-    ("testInitFallsBackWhenPhysicalProjectKeychainUnavailable", testInitFallsBackWhenPhysicalProjectKeychainUnavailable),
     ("testRoleCreateListShowAndReasonRequirement", testRoleCreateListShowAndReasonRequirement),
     ("testRoleUpdateAndDeleteMutatePolicyWithAudit", testRoleUpdateAndDeleteMutatePolicyWithAudit),
     ("testConfigTamperRejectsPolicyMutationUntilTrusted", testConfigTamperRejectsPolicyMutationUntilTrusted),

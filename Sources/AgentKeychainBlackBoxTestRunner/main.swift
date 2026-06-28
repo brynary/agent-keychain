@@ -203,7 +203,7 @@ func testBlackBoxBackendHealthcheck() throws {
     try expectContains(result.stdout, "agent-keychain black-box backend ready", "healthcheck stdout")
 }
 
-func testProjectLifecyclePhysicalAndFallbackModes() throws {
+func testProjectLifecycle() throws {
     let physical = try TemporaryDirectory()
     let physicalStateURL = physical.url.appendingPathComponent("state.json")
 
@@ -214,7 +214,6 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
     try expect(FileManager.default.fileExists(atPath: projectDir.appendingPathComponent("locks").path), "init should create locks")
     try expect(FileManager.default.fileExists(atPath: projectDir.appendingPathComponent("config.integrity.json").path), "init should create integrity")
     let config = try readConfig(projectRoot: physical.url)
-    try expectEqual(config.project.keychainMode, .physical, "physical init mode")
 
     let state = try readState(physicalStateURL)
     try expectEqual(state.projectKeychainCreations.count, 1, "physical keychain creation count")
@@ -223,7 +222,7 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
 
     let status = try runAgentKeychain(["status"], workingDirectory: physical.url, stateURL: physicalStateURL)
     try expectEqual(status.exitCode, 0, "status exit code")
-    try expectContains(status.stdout, "Keychain mode: physical", "physical status")
+    try expectContains(status.stdout, "Project keychain: configured", "project keychain status")
 
     let path = try runAgentKeychain(["config", "path"], workingDirectory: physical.url, stateURL: physicalStateURL)
     try expectEqual(path.stdout, configURL(projectRoot: physical.url).path + "\n", "config path stdout")
@@ -244,19 +243,6 @@ func testProjectLifecyclePhysicalAndFallbackModes() throws {
     let audit = try readAudit(projectRoot: physical.url)
     try expectContains(audit, "\"event\":\"project_initialized\"", "init audit")
     try expectNotContains(audit, "black-box-generated-password", "audit should not contain generated password")
-
-    let fallback = try TemporaryDirectory()
-    let fallbackStateURL = fallback.url.appendingPathComponent("state.json")
-    try writeState(BlackBoxTestState(failPhysicalKeychainCreation: true), to: fallbackStateURL)
-    try initializeProject(fallback, stateURL: fallbackStateURL, createExampleRoles: false)
-
-    let fallbackConfig = try readConfig(projectRoot: fallback.url)
-    try expectEqual(fallbackConfig.project.keychainMode, .fallback, "fallback config mode")
-    let fallbackState = try readState(fallbackStateURL)
-    try expect(fallbackState.projectPasswords.isEmpty, "fallback mode should not store project keychain password")
-    let fallbackStatus = try runAgentKeychain(["status"], workingDirectory: fallback.url, stateURL: fallbackStateURL)
-    try expectContains(fallbackStatus.stdout, "Physical project-keychain separation: unavailable", "fallback status")
-    try expectContains(try readAudit(projectRoot: fallback.url), "\"event\":\"fallback_keychain_mode_selected\"", "fallback audit")
 }
 
 func testConfigTrustAndCommandLifecycle() throws {
@@ -668,7 +654,7 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
 
 let tests: [(String, () throws -> Void)] = [
     ("testBlackBoxBackendHealthcheck", testBlackBoxBackendHealthcheck),
-    ("testProjectLifecyclePhysicalAndFallbackModes", testProjectLifecyclePhysicalAndFallbackModes),
+    ("testProjectLifecycle", testProjectLifecycle),
     ("testConfigTrustAndCommandLifecycle", testConfigTrustAndCommandLifecycle),
     ("testRoleManagementCommands", testRoleManagementCommands),
     ("testSecretCommandsAndPolicies", testSecretCommandsAndPolicies),
