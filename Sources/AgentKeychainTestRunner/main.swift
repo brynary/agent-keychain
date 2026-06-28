@@ -202,7 +202,7 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: workingDirectory)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -211,7 +211,7 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: workingDirectory)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -317,7 +317,7 @@ func testRoleCreateListShowAndReasonRequirement() throws {
         "--reason", "Create analyst role for reporting workflows",
         "--description", "Reporting and read-only analytics",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: temp.url)
 
     try expectEqual(created.exitCode, 0, "role create exit code")
@@ -328,7 +328,7 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role in config")
     try expectEqual(analyst.description, "Reporting and read-only analytics", "analyst description")
     try expectEqual(analyst.requireReason, true, "analyst reason")
-    try expectEqual(analyst.allowEnvInjection, false, "analyst env injection")
+    try expectEqual(analyst.allowSecretExport, false, "analyst secret export")
 
     let list = cli.run(["role", "list"], workingDirectory: temp.url)
     try expectEqual(list.exitCode, 0, "role list exit code")
@@ -338,7 +338,7 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(show.exitCode, 0, "role show exit code")
     try expectEqual(
         show.stdout,
-        "{\"allowEnvInjection\":false,\"description\":\"Reporting and read-only analytics\",\"requireReason\":true}\n",
+        "{\"allowSecretExport\":false,\"description\":\"Reporting and read-only analytics\",\"requireReason\":true}\n",
         "role show JSON"
     )
 
@@ -367,7 +367,7 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
         "--reason", "Tighten analyst role policy",
         "--description", "Read-only reporting",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: temp.url)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
@@ -376,7 +376,7 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role after update")
     try expectEqual(analyst.description, "Read-only reporting", "updated role description")
     try expectEqual(analyst.requireReason, true, "updated require reason")
-    try expectEqual(analyst.allowEnvInjection, false, "updated deny env injection")
+    try expectEqual(analyst.allowSecretExport, false, "updated deny secret export")
 
     let setSecret = cli.run([
         "secret", "set", "analyst-token",
@@ -571,7 +571,7 @@ func testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput() throws {
         "--reason", "Review approved contractor invoices"
     ], workingDirectory: temp.url)
     try expectEqual(rawDenied.exitCode, 1, "raw denied exit code")
-    try expect(rawDenied.stderr.contains("Role finance disallows raw secret output"), "raw denied message: \(rawDenied.stderr)")
+    try expect(rawDenied.stderr.contains("Role finance disallows secret export"), "raw denied message: \(rawDenied.stderr)")
 
     let allowed = cli.run([
         "secret", "get", "mercury-api-key",
@@ -1352,8 +1352,8 @@ func testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride() throws {
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url)
-    try expectEqual(rawDenied.exitCode, 1, "privileged env denied exit code")
-    try expect(rawDenied.stderr.contains("Role finance disallows environment-variable secret injection"), "privileged env denied message: \(rawDenied.stderr)")
+    try expectEqual(rawDenied.exitCode, 1, "privileged secret export denied exit code")
+    try expect(rawDenied.stderr.contains("Role finance disallows secret export to environment variables"), "privileged secret export denied message: \(rawDenied.stderr)")
     try expectEqual(runner.invocations.count, 0, "denied privileged run must not invoke command")
 
     let allowed = cli.run([
@@ -1364,12 +1364,12 @@ func testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride() throws {
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url)
-    try expectEqual(allowed.exitCode, 0, "privileged env allowed exit code")
+    try expectEqual(allowed.exitCode, 0, "privileged secret export allowed exit code")
     try expectEqual(runner.invocations.count, 1, "allowed privileged run invokes command")
-    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "privileged env value")
+    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "privileged secret export value")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    try expect(auditText.contains("\"event\":\"privileged_environment_injection_override\""), "audit should include privileged env override")
+    try expect(auditText.contains("\"event\":\"privileged_secret_export_override\""), "audit should include privileged secret export override")
     try expect(auditText.contains("\"event\":\"policy_rejection\""), "audit should include run policy rejection")
     try expect(!auditText.contains("mercury_secret"), "audit must not contain finance secret")
 }

@@ -28,7 +28,7 @@ extension AgentKeychainCLI {
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-reason", "--deny-env-injection"]
+            booleanFlags: ["--require-reason", "--deny-secret-export"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
         try dependencies.userPresenceAuthorizer.authorize(reason: reason)
@@ -63,7 +63,7 @@ extension AgentKeychainCLI {
         config.roles[name] = RoleConfig(
             description: description,
             requireReason: options.hasFlag("--require-reason"),
-            allowEnvInjection: !options.hasFlag("--deny-env-injection")
+            allowSecretExport: !options.hasFlag("--deny-secret-export")
         )
         let newHash = try config.canonicalHash()
 
@@ -161,7 +161,7 @@ extension AgentKeychainCLI {
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-reason", "--no-require-reason", "--deny-env-injection", "--allow-env-injection"]
+            booleanFlags: ["--require-reason", "--no-require-reason", "--deny-secret-export", "--allow-secret-export"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
         try dependencies.userPresenceAuthorizer.authorize(reason: reason)
@@ -181,11 +181,11 @@ extension AgentKeychainCLI {
         if options.hasFlag("--no-require-reason") {
             role.requireReason = false
         }
-        if options.hasFlag("--deny-env-injection") {
-            role.allowEnvInjection = false
+        if options.hasFlag("--deny-secret-export") {
+            role.allowSecretExport = false
         }
-        if options.hasFlag("--allow-env-injection") {
-            role.allowEnvInjection = true
+        if options.hasFlag("--allow-secret-export") {
+            role.allowSecretExport = true
         }
         config.roles[name] = role
         let newHash = try config.canonicalHash()

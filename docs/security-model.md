@@ -54,7 +54,7 @@ The CLI enforces:
 - Volumes can only be unlocked by their owning role.
 - Browser profiles can only be opened by their owning role.
 - Roles can require a reason.
-- Roles can deny raw environment-variable injection.
+- Roles can deny secret export to raw stdout and child-process environment variables.
 - Policy mutations require user presence and a reason.
 
 Policy checks run before touching keychain items, disk images, browser profiles, or child processes where practical.

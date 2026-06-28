@@ -10,7 +10,7 @@ public struct ProjectInfo: Codable, Equatable, Sendable {
 public struct RoleConfig: Codable, Equatable, Sendable {
     public var description: String
     public var requireReason: Bool
-    public var allowEnvInjection: Bool
+    public var allowSecretExport: Bool
 }
 
 public struct SecretMetadata: Codable, Equatable, Sendable {

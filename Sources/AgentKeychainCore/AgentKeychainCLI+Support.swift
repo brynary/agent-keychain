@@ -280,6 +280,6 @@ extension AgentKeychainCLI {
     }
 
     func defaultsToDetachOnExit(_ role: RoleConfig) -> Bool {
-        role.requireReason || !role.allowEnvInjection
+        role.requireReason || !role.allowSecretExport
     }
 }

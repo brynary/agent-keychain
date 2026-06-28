@@ -112,9 +112,9 @@ The repository ignores local keychains, volumes, locks, the audit log, and the i
 
 Example roles:
 
-- `regular`: day-to-day lower-risk work, with environment injection allowed.
-- `workspace-admin`: identity and workspace administration, with reasons required and environment injection denied.
-- `finance`: money movement and billing workflows, with reasons required and environment injection denied.
+- `regular`: day-to-day lower-risk work, with secret export allowed.
+- `workspace-admin`: identity and workspace administration, with reasons required and secret export denied.
+- `finance`: money movement and billing workflows, with reasons required and secret export denied.
 
 Roles own their own secrets, volumes, and browser profiles. A command running under one role cannot use another role's resources.
 

@@ -160,7 +160,7 @@ extension AgentKeychainCLI {
             runID: runID
         )
 
-        if !role.allowEnvInjection && !options.hasFlag("--allow-raw-secret") {
+        if !role.allowSecretExport && !options.hasFlag("--allow-raw-secret") {
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
                 runID: runID,
@@ -170,7 +170,7 @@ extension AgentKeychainCLI {
                 role: roleName,
                 resource: name,
                 reason: reason,
-                message: "Role \(roleName) disallows raw secret output"
+                message: "Role \(roleName) disallows secret export"
             ))
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
@@ -181,9 +181,9 @@ extension AgentKeychainCLI {
                 role: roleName,
                 resource: name,
                 reason: reason,
-                message: "Role \(roleName) disallows raw secret output"
+                message: "Role \(roleName) disallows secret export"
             ))
-            throw AgentKeychainError.policy("Role \(roleName) disallows raw secret output. Re-run with --allow-raw-secret --reason TEXT.")
+            throw AgentKeychainError.policy("Role \(roleName) disallows secret export. Re-run with --allow-raw-secret --reason TEXT.")
         }
 
         if options.hasFlag("--allow-raw-secret") {

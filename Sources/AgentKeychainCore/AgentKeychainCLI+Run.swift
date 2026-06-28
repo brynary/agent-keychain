@@ -21,7 +21,7 @@ extension AgentKeychainCLI {
         )
         var environment: [String: String] = [:]
 
-        if !role.allowEnvInjection && !request.secretBindings.isEmpty {
+        if !role.allowSecretExport && !request.secretBindings.isEmpty {
             guard request.allowPrivilegedEnv else {
                 try audit.append(AuditEvent(
                     timestamp: dependencies.clock.now(),
@@ -31,17 +31,17 @@ extension AgentKeychainCLI {
                     result: "denied",
                     role: request.role,
                     reason: request.reason,
-                    message: "Role \(request.role) disallows environment-variable secret injection"
+                    message: "Role \(request.role) disallows secret export to environment variables"
                 ))
-                throw AgentKeychainError.policy("Role \(request.role) disallows environment-variable secret injection. Re-run with --allow-privileged-env --reason TEXT.")
+                throw AgentKeychainError.policy("Role \(request.role) disallows secret export to environment variables. Re-run with --allow-privileged-env --reason TEXT.")
             }
             _ = try PolicyEngine.requireMutationReason(request.reason)
-            try dependencies.userPresenceAuthorizer.authorize(reason: request.reason ?? "Allow privileged environment injection")
+            try dependencies.userPresenceAuthorizer.authorize(reason: request.reason ?? "Allow privileged secret export to environment variables")
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
                 runID: runID,
                 project: config.project.name,
-                event: "privileged_environment_injection_override",
+                event: "privileged_secret_export_override",
                 result: "success",
                 role: request.role,
                 reason: request.reason

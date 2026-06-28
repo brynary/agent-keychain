@@ -138,7 +138,7 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -147,7 +147,7 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -297,19 +297,19 @@ func testRoleManagementCommands() throws {
 
     let show = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(show.stdout, "\"description\":\"Analysis work\"", "role show")
-    try expectContains(show.stdout, "\"allowEnvInjection\":true", "role create defaults to env injection")
+    try expectContains(show.stdout, "\"allowSecretExport\":true", "role create defaults to secret export")
 
     let update = try runAgentKeychain([
         "role", "update", "analyst",
         "--reason", "Tighten analyst policy",
         "--require-reason",
-        "--deny-env-injection",
+        "--deny-secret-export",
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
     let updated = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(updated.stdout, "\"requireReason\":true", "updated role requires reason")
-    try expectContains(updated.stdout, "\"allowEnvInjection\":false", "updated role denies env")
+    try expectContains(updated.stdout, "\"allowSecretExport\":false", "updated role denies secret export")
 
     let delete = try runAgentKeychain([
         "role", "delete", "analyst",
@@ -369,7 +369,7 @@ func testSecretCommandsAndPolicies() throws {
         "--reason", "Review approved invoices"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(rawDenied.exitCode, 1, "finance raw denied exit code")
-    try expectContains(rawDenied.stderr, "disallows raw secret output", "finance raw denied stderr")
+    try expectContains(rawDenied.stderr, "disallows secret export", "finance raw denied stderr")
 
     let rawAllowed = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
@@ -578,7 +578,7 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
         "--", "agent-command"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(financeDenied.exitCode, 1, "finance env denied")
-    try expectContains(financeDenied.stderr, "disallows environment-variable secret injection", "finance env denied stderr")
+    try expectContains(financeDenied.stderr, "disallows secret export to environment variables", "finance env denied stderr")
 
     let financeAllowed = try runAgentKeychain([
         "run",
@@ -624,7 +624,7 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
     try expect(state.detachedMountpoints.contains(mountpoint), "run detach-on-exit should detach browser volume")
 
     let audit = try readAudit(projectRoot: temp.url)
-    try expectContains(audit, "\"event\":\"privileged_environment_injection_override\"", "privileged env audit")
+    try expectContains(audit, "\"event\":\"privileged_secret_export_override\"", "privileged secret export audit")
     try expectContains(audit, "\"event\":\"command_started\"", "run command started audit")
     try expectContains(audit, "\"event\":\"command_completed\"", "run command completed audit")
     try expectNotContains(audit, "ghp_run_secret", "audit should not contain regular run secret")
