@@ -209,10 +209,6 @@ swift run agent-keychain-black-box-test-runner
 
 GitHub Actions runs the same build and test layers on `main` and pull requests.
 
-## Specification
-
-`SPEC.md` is the implementation handoff and source-of-truth for v0.1 behavior. Keep the README concise, and update the spec when the product contract changes.
-
 ## License
 
 No license has been added yet.
