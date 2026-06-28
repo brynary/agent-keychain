@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  PRODUCT_NAME: agent-keychain
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build package
+        run: swift build
+
+      - name: Run core command tests
+        run: swift run agent-keychain-test-runner
+
+      - name: Build CLI executable for black-box tests
+        run: swift build --product "$PRODUCT_NAME"
+
+      - name: Run black-box integration tests
+        run: swift run agent-keychain-black-box-test-runner
+
+      - name: Build release binary
+        run: swift build -c release --product "$PRODUCT_NAME"
+
+      - name: Package release asset
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          arch="$(uname -m)"
+          asset_name="${PRODUCT_NAME}-${version}-macos-${arch}"
+          asset_dir="dist/${asset_name}"
+          archive_path="dist/${asset_name}.tar.gz"
+          checksum_path="${archive_path}.sha256"
+
+          mkdir -p "$asset_dir"
+          cp ".build/release/${PRODUCT_NAME}" "$asset_dir/"
+          cp README.md "$asset_dir/"
+          tar -czf "$archive_path" -C dist "$asset_name"
+
+          (
+            cd dist
+            shasum -a 256 "${asset_name}.tar.gz" > "${asset_name}.tar.gz.sha256"
+          )
+
+          {
+            echo "archive=$archive_path"
+            echo "checksum=$checksum_path"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "${{ steps.package.outputs.archive }}" \
+              "${{ steps.package.outputs.checksum }}" \
+              --clobber
+          else
+            prerelease_flag=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              prerelease_flag=(--prerelease)
+            fi
+
+            gh release create "$RELEASE_TAG" \
+              "${{ steps.package.outputs.archive }}" \
+              "${{ steps.package.outputs.checksum }}" \
+              --title "$RELEASE_TAG" \
+              --generate-notes \
+              "${prerelease_flag[@]}"
+          fi
