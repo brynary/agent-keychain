@@ -284,7 +284,7 @@ public struct AgentKeychainCLI {
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-reason", "--deny-env-injection", "--allow-env-injection"]
+            booleanFlags: ["--require-reason", "--deny-env-injection"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
         try dependencies.userPresenceAuthorizer.authorize(reason: reason)
@@ -316,11 +316,10 @@ public struct AgentKeychainCLI {
 
         let oldHash = try config.canonicalHash()
         let description = options.value(for: "--description") ?? ""
-        let allowEnvInjection = options.hasFlag("--deny-env-injection") ? false : true
         config.roles[name] = RoleConfig(
             description: description,
             requireReason: options.hasFlag("--require-reason"),
-            allowEnvInjection: options.hasFlag("--allow-env-injection") ? true : allowEnvInjection
+            allowEnvInjection: !options.hasFlag("--deny-env-injection")
         )
         let newHash = try config.canonicalHash()
 

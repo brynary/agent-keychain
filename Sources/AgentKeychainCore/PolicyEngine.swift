@@ -14,10 +14,4 @@ public enum PolicyEngine {
         }
         return role
     }
-
-    public static func requireReasonIfNeeded(roleName: String, role: RoleConfig, reason: String?) throws {
-        if role.requireReason && (reason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
-            throw AgentKeychainError.invalidArguments("Role \(roleName) requires --reason")
-        }
-    }
 }

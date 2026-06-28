@@ -194,7 +194,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "role", "create", "regular",
         "--reason", "Create regular example role",
         "--description", "Day-to-day low-risk agent work",
-        "--allow-env-injection",
     ], workingDirectory: workingDirectory)
     try expectEqual(regular.exitCode, 0, "regular role fixture")
 

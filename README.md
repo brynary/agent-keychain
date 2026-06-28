@@ -48,8 +48,7 @@ Create the role or roles your project needs:
 ```sh
 agent-keychain role create regular \
   --reason "Create regular role for day-to-day agent work" \
-  --description "Day-to-day lower-risk work" \
-  --allow-env-injection
+  --description "Day-to-day lower-risk work"
 ```
 
 Add a secret for regular agent work:

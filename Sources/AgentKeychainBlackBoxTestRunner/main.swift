@@ -130,7 +130,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "role", "create", "regular",
         "--reason", "Create regular example role",
         "--description", "Day-to-day low-risk agent work",
-        "--allow-env-injection",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(regular.exitCode, 0, "regular role fixture")
 
@@ -290,7 +289,6 @@ func testRoleManagementCommands() throws {
         "role", "create", "analyst",
         "--reason", "Create analyst role",
         "--description", "Analysis work",
-        "--allow-env-injection",
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(create.exitCode, 0, "role create exit code")
 
@@ -299,6 +297,7 @@ func testRoleManagementCommands() throws {
 
     let show = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(show.stdout, "\"description\":\"Analysis work\"", "role show")
+    try expectContains(show.stdout, "\"allowEnvInjection\":true", "role create defaults to env injection")
 
     let update = try runAgentKeychain([
         "role", "update", "analyst",
