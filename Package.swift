@@ -9,6 +9,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "agent-keychain", targets: ["agent-keychain"]),
+        .executable(name: "agent-keychain-black-box-test-runner", targets: ["AgentKeychainBlackBoxTestRunner"]),
         .executable(name: "agent-keychain-test-runner", targets: ["AgentKeychainTestRunner"]),
         .library(name: "AgentKeychainCore", targets: ["AgentKeychainCore"])
     ],
@@ -16,6 +17,10 @@ let package = Package(
         .target(name: "AgentKeychainCore"),
         .executableTarget(
             name: "agent-keychain",
+            dependencies: ["AgentKeychainCore"]
+        ),
+        .executableTarget(
+            name: "AgentKeychainBlackBoxTestRunner",
             dependencies: ["AgentKeychainCore"]
         ),
         .executableTarget(
