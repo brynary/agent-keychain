@@ -182,7 +182,6 @@ agent-keychain run \
   [--volume VOLUME]... \
   [--browser BROWSER]... \
   [--detach-on-exit] \
-  [--keychain-timeout 5m] \
   -- COMMAND [ARGS...]
 ```
 

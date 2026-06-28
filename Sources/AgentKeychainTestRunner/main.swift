@@ -1335,7 +1335,6 @@ func testRunInjectsAllowedSecretAndAuditsCommand() throws {
     let run = cli.run([
         "run",
         "--role", "regular",
-        "--keychain-timeout", "5m",
         "--secret", "GITHUB_TOKEN=github-readonly",
         "--", "agent-command", "--flag"
     ], workingDirectory: temp.url)

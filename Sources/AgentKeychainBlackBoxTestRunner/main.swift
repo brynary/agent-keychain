@@ -571,7 +571,6 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
     let runRegular = try runAgentKeychain([
         "run",
         "--role", "regular",
-        "--keychain-timeout", "5m",
         "--secret", "GITHUB_TOKEN=github-readonly",
         "--", "agent-command", "--flag"
     ], workingDirectory: temp.url, stateURL: stateURL)

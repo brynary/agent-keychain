@@ -405,21 +405,13 @@ For any operation requiring project secrets:
 5. Optionally lock the project keychain again after use.
 ```
 
-## Project Keychain Timeout
-
-The project keychain should support timeout locking.
+## Project Keychain Locking
 
 Default behavior:
 
 * unlock for the operation
 * read/write needed item
 * lock on command exit
-
-For longer operations such as `run` or `browser open`, support:
-
-```bash
-agent-keychain run --keychain-timeout 5m ...
-```
 
 The project keychain should be locked on exit via a `defer` / cleanup handler.
 

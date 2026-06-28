@@ -1720,7 +1720,6 @@ private struct RunRequest {
     let browsers: [String]
     let allowPrivilegedEnv: Bool
     let detachOnExit: Bool
-    let keychainTimeout: String?
     let command: [String]
 
     init(arguments: [String]) throws {
@@ -1731,7 +1730,6 @@ private struct RunRequest {
         var browsers: [String] = []
         var allowPrivilegedEnv = false
         var detachOnExit = false
-        var keychainTimeout: String?
         var index = 0
         var command: [String] = []
 
@@ -1770,10 +1768,6 @@ private struct RunRequest {
                 allowPrivilegedEnv = true
             case "--detach-on-exit":
                 detachOnExit = true
-            case "--keychain-timeout":
-                index += 1
-                guard index < arguments.count else { throw AgentKeychainError.invalidArguments("--keychain-timeout requires a value") }
-                keychainTimeout = arguments[index]
             default:
                 throw AgentKeychainError.invalidArguments("Unexpected run argument: \(argument)")
             }
@@ -1794,7 +1788,6 @@ private struct RunRequest {
         self.browsers = browsers
         self.allowPrivilegedEnv = allowPrivilegedEnv
         self.detachOnExit = detachOnExit
-        self.keychainTimeout = keychainTimeout
         self.command = command
     }
 }
