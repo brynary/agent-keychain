@@ -248,6 +248,43 @@ func testCLITypeExists() throws {
     try expect(AgentKeychainCLI.name == "agent-keychain", "expected CLI name to be agent-keychain")
 }
 
+func testTopLevelHelpIsUsefulAndDoesNotRequireProject() throws {
+    let cli = AgentKeychainCLI(dependencies: .testing(
+        keychainStore: RecordingKeychainStore(),
+        secretPrompt: QueueSecretPrompt([]),
+        diskImageStore: RecordingDiskImageStore(),
+        browserLauncher: RecordingBrowserLauncher(),
+        commandRunner: RecordingCommandRunner(),
+        userPresenceAuthorizer: RecordingUserPresenceAuthorizer(),
+        randomPassword: "generated-project-keychain-password",
+        now: ISO8601DateFormatter().date(from: "2026-06-28T16:40:11Z")!
+    ))
+    let temp = try TemporaryDirectory()
+
+    let noArguments = cli.run([], workingDirectory: temp.url)
+    try expectEqual(noArguments.exitCode, 2, "no-argument help exit code")
+    try expect(noArguments.stdout.isEmpty, "no-argument help should not write stdout")
+    try expect(noArguments.stderr.contains("Project-scoped credential and browser-session isolation"), "no-argument help description")
+    try expect(noArguments.stderr.contains("Commands:"), "no-argument help command section")
+    try expect(noArguments.stderr.contains("  init       Initialize agent-keychain state in a project"), "no-argument help init command")
+    try expect(!noArguments.stderr.contains("No agent-keychain project found"), "no-argument help should not require a project")
+
+    for helpArguments in [["--help"], ["-h"], ["help"]] {
+        let result = cli.run(helpArguments, workingDirectory: temp.url)
+        try expectEqual(result.exitCode, 0, "\(helpArguments) exit code")
+        try expect(result.stdout.contains("Usage:"), "\(helpArguments) usage section")
+        try expect(result.stdout.contains("agent-keychain [--project PATH] <command> [options]"), "\(helpArguments) top-level usage")
+        try expect(result.stdout.contains("Examples:"), "\(helpArguments) examples section")
+        try expect(result.stderr.isEmpty, "\(helpArguments) should not write stderr")
+    }
+
+    let unknown = cli.run(["not-a-command"], workingDirectory: temp.url)
+    try expectEqual(unknown.exitCode, 2, "unknown command exit code")
+    try expect(unknown.stderr.contains("Unknown command: not-a-command"), "unknown command message")
+    try expect(unknown.stderr.contains("Commands:"), "unknown command help")
+    try expect(!unknown.stderr.contains("No agent-keychain project found"), "unknown command should not require a project")
+}
+
 func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
@@ -1456,6 +1493,7 @@ func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
 
 let tests: [(String, () throws -> Void)] = [
     ("testCLITypeExists", testCLITypeExists),
+    ("testTopLevelHelpIsUsefulAndDoesNotRequireProject", testTopLevelHelpIsUsefulAndDoesNotRequireProject),
     ("testInitCreatesProjectLayoutConfigIntegrityAndAudit", testInitCreatesProjectLayoutConfigIntegrityAndAudit),
     ("testRoleCreateListShowAndReasonRequirement", testRoleCreateListShowAndReasonRequirement),
     ("testRoleUpdateAndDeleteMutatePolicyWithAudit", testRoleUpdateAndDeleteMutatePolicyWithAudit),

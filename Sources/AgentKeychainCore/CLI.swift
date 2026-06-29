@@ -14,6 +14,46 @@ public struct CommandResult: Equatable {
 
 public struct AgentKeychainCLI {
     public static let name = "agent-keychain"
+    private static let projectCommands: Set<String> = [
+        "status",
+        "config",
+        "role",
+        "secret",
+        "volume",
+        "browser",
+        "run"
+    ]
+    private static let topLevelHelp = """
+    agent-keychain
+
+    Project-scoped credential and browser-session isolation for local AI agent workflows.
+
+    Usage:
+      agent-keychain [--project PATH] <command> [options]
+      agent-keychain help
+      agent-keychain --help
+
+    Commands:
+      init       Initialize agent-keychain state in a project
+      status     Show project status, roles, volumes, and browsers
+      config     Show or trust project configuration
+      role       Create, list, show, update, or delete roles
+      secret     Set, get, list, or delete role-scoped secrets
+      volume     Create, unlock, lock, inspect, or delete encrypted volumes
+      browser    Create, open, list, or delete isolated Chrome profiles
+      run        Run a command with role-scoped secrets, volumes, or browser profiles
+
+    Global options:
+      --project PATH  Use a specific agent-keychain project root
+      -h, --help      Show this help
+
+    Examples:
+      agent-keychain init --project-name my-project
+      agent-keychain status
+      agent-keychain role create regular --reason "Create regular role"
+      agent-keychain run --role regular --secret GITHUB_TOKEN=github-readonly -- agent-command
+
+    """
 
     let dependencies: AgentKeychainDependencies
 
@@ -26,7 +66,13 @@ public struct AgentKeychainCLI {
             var arguments = arguments
             let explicitProject = try consumeProjectOverride(arguments: &arguments)
             guard let command = arguments.first else {
-                return CommandResult(exitCode: 2, stderr: "Usage: agent-keychain <command>\n")
+                return CommandResult(exitCode: 2, stderr: Self.topLevelHelp)
+            }
+            if ["help", "--help", "-h"].contains(command) {
+                return CommandResult(exitCode: 0, stdout: Self.topLevelHelp)
+            }
+            guard command == "init" || Self.projectCommands.contains(command) else {
+                return CommandResult(exitCode: 2, stderr: "Unknown command: \(command)\n\n\(Self.topLevelHelp)")
             }
             let projectRoot = try resolveProjectRoot(
                 command: command,

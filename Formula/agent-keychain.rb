@@ -15,6 +15,6 @@ class AgentKeychain < Formula
   end
 
   test do
-    assert_match "Usage: agent-keychain <command>", shell_output("#{bin}/agent-keychain 2>&1", 2)
+    assert_match "agent-keychain", shell_output("#{bin}/agent-keychain 2>&1", 2)
   end
 end
