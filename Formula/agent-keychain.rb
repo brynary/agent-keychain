@@ -2,8 +2,8 @@ class AgentKeychain < Formula
   desc "Project-scoped credential and browser-session isolation for local AI agents"
   homepage "https://github.com/brynary/agent-keychain"
   url "ssh://git@github.com/brynary/agent-keychain.git",
-      tag:      "v0.1.0",
-      revision: "290264571965950c3598a855510df17d7934416c"
+      tag:      "v0.2.0",
+      revision: "a2e02c30b678dfde4662c87fb600390268011aac"
   license :cannot_represent
   head "ssh://git@github.com/brynary/agent-keychain.git", branch: "main"
 
