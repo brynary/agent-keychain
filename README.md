@@ -213,6 +213,7 @@ The short version:
 
 - Secret values never live in `config.json`.
 - Disk-image passwords never live in `config.json`.
+- The generated project-keychain password is stored in the login keychain; unsigned CLI builds fall back to an in-process user-presence check when macOS rejects keychain `userPresence` storage.
 - Passwords are passed to `hdiutil` through standard input, not arguments.
 - Chrome launches with `--user-data-dir` inside a managed encrypted volume.
 - Chrome passthrough arguments cannot override the managed profile path, and remote debugging addresses are restricted to loopback.

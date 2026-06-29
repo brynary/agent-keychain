@@ -2,6 +2,16 @@ import Foundation
 import LocalAuthentication
 import Security
 
+public enum LoginKeychainAccessControlFallback {
+    public static func shouldStoreWithoutAccessControl(after status: OSStatus) -> Bool {
+        status == errSecMissingEntitlement
+    }
+}
+
+public enum ProjectKeychainUnlockPolicy {
+    public static let useProvidedPassword = true
+}
+
 public final class MacOSKeychainStore: KeychainStoring {
     private let account = "default"
     private var projectKeychainPath: String?
@@ -34,7 +44,11 @@ public final class MacOSKeychainStore: KeychainStoring {
     }
 
     public func storeProjectKeychainPassword(service: String, password: String) throws {
-        try storeLoginKeychainItem(service: service, value: password, requireUserPresence: true)
+        do {
+            try storeLoginKeychainItem(service: service, value: password, requireUserPresence: true)
+        } catch let error as KeychainStatusError where LoginKeychainAccessControlFallback.shouldStoreWithoutAccessControl(after: error.status) {
+            try storeLoginKeychainItem(service: service, value: password, requireUserPresence: false)
+        }
     }
 
     public func storeGenericPassword(service: String, value: String) throws {
@@ -70,7 +84,7 @@ public final class MacOSKeychainStore: KeychainStoring {
             throw AgentKeychainError.filesystem("Unable to open project keychain: \(securityMessage(status))")
         }
         status = password.withCString { passwordPointer in
-            SecKeychainUnlock(keychain, UInt32(strlen(passwordPointer)), passwordPointer, false)
+            SecKeychainUnlock(keychain, UInt32(strlen(passwordPointer)), passwordPointer, ProjectKeychainUnlockPolicy.useProvidedPassword)
         }
         guard status == errSecSuccess else {
             throw AgentKeychainError.filesystem("Unable to unlock project keychain: \(securityMessage(status))")
@@ -107,13 +121,14 @@ public final class MacOSKeychainStore: KeychainStoring {
 
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {
-            throw AgentKeychainError.filesystem("Unable to store login keychain item: \(securityMessage(status))")
+            throw KeychainStatusError(message: "Unable to store login keychain item: \(securityMessage(status))", status: status)
         }
     }
 
     private func readLoginKeychainItem(service: String, prompt: String) throws -> String {
         let context = LAContext()
         context.localizedReason = prompt
+        try UserPresenceAuthorization.authorize(context: context, reason: prompt)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -229,5 +244,18 @@ public final class MacOSKeychainStore: KeychainStoring {
             return "\(message) (\(status))"
         }
         return "Security framework status \(status)"
+    }
+}
+
+private struct KeychainStatusError: Error, CustomStringConvertible, LocalizedError {
+    let message: String
+    let status: OSStatus
+
+    var description: String {
+        message
+    }
+
+    var errorDescription: String? {
+        message
     }
 }

@@ -1,6 +1,7 @@
 import AgentKeychainCore
 import Foundation
 import CryptoKit
+import Security
 
 struct TestFailure: Error, CustomStringConvertible {
     let description: String
@@ -247,6 +248,28 @@ func makeInitializedCLI(
 
 func testCLITypeExists() throws {
     try expect(AgentKeychainCLI.name == "agent-keychain", "expected CLI name to be agent-keychain")
+}
+
+func testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement() throws {
+    try expect(
+        LoginKeychainAccessControlFallback.shouldStoreWithoutAccessControl(after: errSecMissingEntitlement),
+        "missing entitlement should use unsigned CLI fallback"
+    )
+    try expect(
+        !LoginKeychainAccessControlFallback.shouldStoreWithoutAccessControl(after: errSecAuthFailed),
+        "auth failure should not use unsigned CLI fallback"
+    )
+    try expect(
+        !LoginKeychainAccessControlFallback.shouldStoreWithoutAccessControl(after: errSecDuplicateItem),
+        "duplicate item should not use unsigned CLI fallback"
+    )
+}
+
+func testProjectKeychainUnlockPolicyUsesGeneratedPassword() throws {
+    try expect(
+        ProjectKeychainUnlockPolicy.useProvidedPassword,
+        "project keychain unlock should use the generated password instead of prompting the user"
+    )
 }
 
 func testTopLevelHelpIsUsefulAndDoesNotRequireProject() throws {
@@ -1649,6 +1672,8 @@ func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
 
 let tests: [(String, () throws -> Void)] = [
     ("testCLITypeExists", testCLITypeExists),
+    ("testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement", testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement),
+    ("testProjectKeychainUnlockPolicyUsesGeneratedPassword", testProjectKeychainUnlockPolicyUsesGeneratedPassword),
     ("testTopLevelHelpIsUsefulAndDoesNotRequireProject", testTopLevelHelpIsUsefulAndDoesNotRequireProject),
     ("testInitCreatesProjectLayoutConfigIntegrityAndAudit", testInitCreatesProjectLayoutConfigIntegrityAndAudit),
     ("testRoleCreateListShowAndReasonRequirement", testRoleCreateListShowAndReasonRequirement),

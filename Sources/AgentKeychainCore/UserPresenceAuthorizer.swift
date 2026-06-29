@@ -7,14 +7,19 @@ public final class LocalAuthenticationAuthorizer: UserPresenceAuthorizing {
     public func authorize(reason: String) throws {
         let context = LAContext()
         context.localizedReason = reason
+        try UserPresenceAuthorization.authorize(context: context, reason: reason)
+    }
+}
 
+enum UserPresenceAuthorization {
+    static func authorize(context: LAContext, reason: String) throws {
         var evaluationError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &evaluationError) else {
             throw AgentKeychainError.policy("User-presence authentication is unavailable")
         }
 
         let semaphore = DispatchSemaphore(value: 0)
-        let result = EvaluationResult()
+        let result = UserPresenceEvaluationResult()
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
             result.authorized = success
             result.error = error
@@ -31,7 +36,7 @@ public final class LocalAuthenticationAuthorizer: UserPresenceAuthorizing {
     }
 }
 
-private final class EvaluationResult: @unchecked Sendable {
+private final class UserPresenceEvaluationResult: @unchecked Sendable {
     var authorized = false
     var error: Error?
 }
