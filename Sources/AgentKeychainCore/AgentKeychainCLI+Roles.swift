@@ -31,7 +31,10 @@ extension AgentKeychainCLI {
             booleanFlags: ["--require-reason", "--deny-secret-export"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try store.loadConfig()
         let audit = AuditLog(url: store.auditURL)
@@ -164,7 +167,10 @@ extension AgentKeychainCLI {
             booleanFlags: ["--require-reason", "--no-require-reason", "--deny-secret-export", "--allow-secret-export"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         guard var role = config.roles[name] else {
@@ -206,7 +212,10 @@ extension AgentKeychainCLI {
         }
         let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         guard config.roles[name] != nil else {

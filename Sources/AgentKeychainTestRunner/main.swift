@@ -186,8 +186,24 @@ final class RecordingCommandRunner: CommandRunning {
 final class RecordingUserPresenceAuthorizer: UserPresenceAuthorizing {
     var reasons: [String] = []
 
-    func authorize(reason: String) throws {
+    func authorize(reason: String, progressReporter: ProgressMessageReporting) throws {
+        progressReporter.report("Waiting for macOS authentication: \(reason)")
         reasons.append(reason)
+    }
+}
+
+final class FailingUserPresenceAuthorizer: UserPresenceAuthorizing {
+    func authorize(reason: String, progressReporter: ProgressMessageReporting) throws {
+        progressReporter.report("Waiting for macOS authentication: \(reason)")
+        throw AgentKeychainError.policy("simulated authentication failure")
+    }
+}
+
+final class RecordingProgressReporter: ProgressMessageReporting {
+    var messages: [String] = []
+
+    func report(_ message: String) {
+        messages.append(message)
     }
 }
 
@@ -226,6 +242,7 @@ func makeInitializedCLI(
     browser: BrowserLaunching = RecordingBrowserLauncher(),
     commandRunner: CommandRunning = RecordingCommandRunner(),
     authorizer: UserPresenceAuthorizing = RecordingUserPresenceAuthorizer(),
+    progressReporter: ProgressMessageReporting = RecordingProgressReporter(),
     createExampleRoles: Bool = true
 ) throws -> AgentKeychainCLI {
     let cli = AgentKeychainCLI(dependencies: .testing(
@@ -235,6 +252,7 @@ func makeInitializedCLI(
         browserLauncher: browser,
         commandRunner: commandRunner,
         userPresenceAuthorizer: authorizer,
+        progressReporter: progressReporter,
         randomPassword: "generated-project-keychain-password",
         now: ISO8601DateFormatter().date(from: "2026-06-28T16:40:11Z")!
     ))
@@ -280,6 +298,7 @@ func testTopLevelHelpIsUsefulAndDoesNotRequireProject() throws {
         browserLauncher: RecordingBrowserLauncher(),
         commandRunner: RecordingCommandRunner(),
         userPresenceAuthorizer: RecordingUserPresenceAuthorizer(),
+        progressReporter: RecordingProgressReporter(),
         randomPassword: "generated-project-keychain-password",
         now: ISO8601DateFormatter().date(from: "2026-06-28T16:40:11Z")!
     ))
@@ -319,6 +338,7 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
         browserLauncher: RecordingBrowserLauncher(),
         commandRunner: RecordingCommandRunner(),
         userPresenceAuthorizer: RecordingUserPresenceAuthorizer(),
+        progressReporter: RecordingProgressReporter(),
         randomPassword: "generated-project-keychain-password",
         now: ISO8601DateFormatter().date(from: "2026-06-28T16:40:11Z")!
     ))
@@ -1654,6 +1674,96 @@ func testPolicyMutationsAndRawOverridesRequireUserPresence() throws {
     try expect(authorizer.reasons.contains("Review approved contractor invoices"), "raw secret override should require user presence")
 }
 
+func testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let progress = RecordingProgressReporter()
+    let cli = try makeInitializedCLI(
+        at: temp.url,
+        keychain: keychain,
+        progressReporter: progress,
+        createExampleRoles: false
+    )
+
+    let roleCreate = cli.run([
+        "role", "create", "regular",
+        "--reason", "Create regular role",
+        "--description", "Day-to-day low-risk agent work",
+    ], workingDirectory: temp.url)
+
+    try expectEqual(roleCreate.exitCode, 0, "role create with progress exit code")
+    try expectEqual(roleCreate.stdout, "Created role regular\n", "progress should not pollute stdout")
+    try expect(
+        progress.messages.contains("Waiting for macOS authentication: Create regular role"),
+        "user-presence authorization should report progress: \(progress.messages)"
+    )
+}
+
+func testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let prompt = QueueSecretPrompt(["mercury_secret"])
+    let runner = RecordingCommandRunner()
+    let progress = RecordingProgressReporter()
+    let cli = try makeInitializedCLI(
+        at: temp.url,
+        keychain: keychain,
+        prompt: prompt,
+        commandRunner: runner,
+        progressReporter: progress
+    )
+
+    let set = cli.run([
+        "secret", "set", "mercury-api-key",
+        "--role", "finance",
+        "--reason", "Add Mercury API key",
+    ], workingDirectory: temp.url)
+    try expectEqual(set.exitCode, 0, "progress fixture secret set")
+
+    progress.messages.removeAll()
+    let run = cli.run([
+        "run",
+        "--role", "finance",
+        "--reason", "Review approved payments",
+        "--allow-privileged-env",
+        "--secret", "MERCURY_API_KEY=mercury-api-key",
+        "--", "agent-command"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(run.exitCode, 0, "privileged run exit code")
+    try expectEqual(run.stdout, "child stdout\n", "progress should not pollute run stdout")
+    try expectEqual(runner.invocations.count, 1, "privileged run child invocation count")
+    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "privileged run injected env")
+    try expect(
+        progress.messages.contains("Waiting for macOS authentication: Review approved payments"),
+        "privileged env override should report progress: \(progress.messages)"
+    )
+}
+
+func testUserPresenceAuthorizationFailureStillReportsProgress() throws {
+    let temp = try TemporaryDirectory()
+    let progress = RecordingProgressReporter()
+    let cli = try makeInitializedCLI(
+        at: temp.url,
+        authorizer: FailingUserPresenceAuthorizer(),
+        progressReporter: progress,
+        createExampleRoles: false
+    )
+
+    let roleCreate = cli.run([
+        "role", "create", "regular",
+        "--reason", "Create regular role",
+        "--description", "Day-to-day low-risk agent work",
+    ], workingDirectory: temp.url)
+
+    try expectEqual(roleCreate.exitCode, 1, "failed user-presence exit code")
+    try expect(roleCreate.stderr.contains("simulated authentication failure"), "failed auth stderr: \(roleCreate.stderr)")
+    try expect(
+        progress.messages.contains("Waiting for macOS authentication: Create regular role"),
+        "failed user-presence authorization should still report progress: \(progress.messages)"
+    )
+}
+
 func testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
@@ -1737,6 +1847,9 @@ let tests: [(String, () throws -> Void)] = [
     ("testRunInjectsAllowedSecretAndAuditsCommand", testRunInjectsAllowedSecretAndAuditsCommand),
     ("testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride", testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride),
     ("testPolicyMutationsAndRawOverridesRequireUserPresence", testPolicyMutationsAndRawOverridesRequireUserPresence),
+    ("testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution", testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution),
+    ("testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution", testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution),
+    ("testUserPresenceAuthorizationFailureStillReportsProgress", testUserPresenceAuthorizationFailureStillReportsProgress),
     ("testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted", testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted)
 ]
 

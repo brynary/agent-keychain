@@ -4,15 +4,23 @@ import LocalAuthentication
 public final class LocalAuthenticationAuthorizer: UserPresenceAuthorizing {
     public init() {}
 
-    public func authorize(reason: String) throws {
+    public func authorize(reason: String, progressReporter: ProgressMessageReporting) throws {
         let context = LAContext()
         context.localizedReason = reason
-        try UserPresenceAuthorization.authorize(context: context, reason: reason)
+        try UserPresenceAuthorization.authorize(
+            context: context,
+            reason: reason,
+            progressReporter: progressReporter
+        )
     }
 }
 
 enum UserPresenceAuthorization {
-    static func authorize(context: LAContext, reason: String) throws {
+    static func authorize(
+        context: LAContext,
+        reason: String,
+        progressReporter: ProgressMessageReporting
+    ) throws {
         var evaluationError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &evaluationError) else {
             throw AgentKeychainError.policy("User-presence authentication is unavailable")
@@ -20,6 +28,7 @@ enum UserPresenceAuthorization {
 
         let semaphore = DispatchSemaphore(value: 0)
         let result = UserPresenceEvaluationResult()
+        progressReporter.report("Waiting for macOS authentication: \(reason)")
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
             result.authorized = success
             result.error = error

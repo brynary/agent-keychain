@@ -119,6 +119,7 @@ public extension AgentKeychainDependencies {
             browserLauncher: BlackBoxBrowserLauncher(store: store),
             commandRunner: BlackBoxCommandRunner(store: store),
             userPresenceAuthorizer: BlackBoxUserPresenceAuthorizer(store: store),
+            progressReporter: BlackBoxProgressReporter(),
             passwordGenerator: BlackBoxPasswordGenerator(),
             clock: BlackBoxClock(),
             runIDFactory: BlackBoxRunIDFactory()
@@ -310,11 +311,15 @@ private final class BlackBoxUserPresenceAuthorizer: UserPresenceAuthorizing {
         self.store = store
     }
 
-    func authorize(reason: String) throws {
+    func authorize(reason: String, progressReporter: ProgressMessageReporting) throws {
         try store.update { state in
             state.authorizations.append(reason)
         }
     }
+}
+
+private final class BlackBoxProgressReporter: ProgressMessageReporting {
+    func report(_ message: String) {}
 }
 
 private struct BlackBoxPasswordGenerator: PasswordGenerating {

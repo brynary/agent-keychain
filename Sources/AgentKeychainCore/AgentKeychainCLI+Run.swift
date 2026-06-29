@@ -36,7 +36,10 @@ extension AgentKeychainCLI {
                 throw AgentKeychainError.policy("Role \(request.role) disallows secret export to environment variables. Re-run with --allow-privileged-env --reason TEXT.")
             }
             _ = try PolicyEngine.requireMutationReason(request.reason)
-            try dependencies.userPresenceAuthorizer.authorize(reason: request.reason ?? "Allow privileged secret export to environment variables")
+            try dependencies.userPresenceAuthorizer.authorize(
+                reason: request.reason ?? "Allow privileged secret export to environment variables",
+                progressReporter: dependencies.progressReporter
+            )
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
                 runID: runID,

@@ -285,7 +285,10 @@ public struct AgentKeychainCLI {
         case "trust-current":
             let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
             let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-            try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+            try dependencies.userPresenceAuthorizer.authorize(
+                reason: reason,
+                progressReporter: dependencies.progressReporter
+            )
             let current = try store.loadConfig()
             try AuditLog(url: store.auditURL).append(AuditEvent(
                 timestamp: dependencies.clock.now(),

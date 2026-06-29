@@ -42,7 +42,10 @@ extension AgentKeychainCLI {
             throw AgentKeychainError.invalidArguments("browser create requires --volume")
         }
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         _ = try PolicyEngine.requireRole(config, roleName)
@@ -148,7 +151,10 @@ extension AgentKeychainCLI {
             throw AgentKeychainError.invalidArguments("browser delete requires --role")
         }
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         _ = try PolicyEngine.requireRole(config, roleName)

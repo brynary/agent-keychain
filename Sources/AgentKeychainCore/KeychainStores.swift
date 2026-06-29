@@ -14,10 +14,17 @@ public enum ProjectKeychainUnlockPolicy {
 
 public final class MacOSKeychainStore: KeychainStoring {
     private let account = "default"
+    private let progressReporter: ProgressMessageReporting
     private var projectKeychainPath: String?
     private var projectKeychainPasswordService: String?
 
-    public init() {}
+    public convenience init() {
+        self.init(progressReporter: StandardErrorProgressReporter())
+    }
+
+    public init(progressReporter: ProgressMessageReporting) {
+        self.progressReporter = progressReporter
+    }
 
     public func createProjectKeychain(path: String, password: String) throws {
         if FileManager.default.fileExists(atPath: path) {
@@ -128,7 +135,11 @@ public final class MacOSKeychainStore: KeychainStoring {
     private func readLoginKeychainItem(service: String, prompt: String) throws -> String {
         let context = LAContext()
         context.localizedReason = prompt
-        try UserPresenceAuthorization.authorize(context: context, reason: prompt)
+        try UserPresenceAuthorization.authorize(
+            context: context,
+            reason: prompt,
+            progressReporter: progressReporter
+        )
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

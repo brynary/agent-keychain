@@ -39,7 +39,11 @@ public protocol SecretPrompting: AnyObject {
 }
 
 public protocol UserPresenceAuthorizing: AnyObject {
-    func authorize(reason: String) throws
+    func authorize(reason: String, progressReporter: ProgressMessageReporting) throws
+}
+
+public protocol ProgressMessageReporting: AnyObject {
+    func report(_ message: String)
 }
 
 public protocol PasswordGenerating {
@@ -61,6 +65,7 @@ public struct AgentKeychainDependencies {
     public var browserLauncher: BrowserLaunching
     public var commandRunner: CommandRunning
     public var userPresenceAuthorizer: UserPresenceAuthorizing
+    public var progressReporter: ProgressMessageReporting
     public var passwordGenerator: PasswordGenerating
     public var clock: Clock
     public var runIDFactory: RunIDMaking
@@ -76,25 +81,54 @@ public struct AgentKeychainDependencies {
         clock: Clock,
         runIDFactory: RunIDMaking
     ) {
+        self.init(
+            keychainStore: keychainStore,
+            secretPrompt: secretPrompt,
+            diskImageStore: diskImageStore,
+            browserLauncher: browserLauncher,
+            commandRunner: commandRunner,
+            userPresenceAuthorizer: userPresenceAuthorizer,
+            progressReporter: StandardErrorProgressReporter(),
+            passwordGenerator: passwordGenerator,
+            clock: clock,
+            runIDFactory: runIDFactory
+        )
+    }
+
+    public init(
+        keychainStore: KeychainStoring,
+        secretPrompt: SecretPrompting,
+        diskImageStore: DiskImageManaging,
+        browserLauncher: BrowserLaunching,
+        commandRunner: CommandRunning,
+        userPresenceAuthorizer: UserPresenceAuthorizing,
+        progressReporter: ProgressMessageReporting,
+        passwordGenerator: PasswordGenerating,
+        clock: Clock,
+        runIDFactory: RunIDMaking
+    ) {
         self.keychainStore = keychainStore
         self.secretPrompt = secretPrompt
         self.diskImageStore = diskImageStore
         self.browserLauncher = browserLauncher
         self.commandRunner = commandRunner
         self.userPresenceAuthorizer = userPresenceAuthorizer
+        self.progressReporter = progressReporter
         self.passwordGenerator = passwordGenerator
         self.clock = clock
         self.runIDFactory = runIDFactory
     }
 
     public static func production() -> AgentKeychainDependencies {
-        AgentKeychainDependencies(
-            keychainStore: MacOSKeychainStore(),
+        let progressReporter = StandardErrorProgressReporter()
+        return AgentKeychainDependencies(
+            keychainStore: MacOSKeychainStore(progressReporter: progressReporter),
             secretPrompt: TerminalSecretPrompt(),
             diskImageStore: ProcessDiskImageStore(),
             browserLauncher: ProcessBrowserLauncher(),
             commandRunner: ProcessCommandRunner(),
             userPresenceAuthorizer: LocalAuthenticationAuthorizer(),
+            progressReporter: progressReporter,
             passwordGenerator: SecurePasswordGenerator(),
             clock: SystemClock(),
             runIDFactory: DefaultRunIDFactory()
@@ -111,6 +145,30 @@ public struct AgentKeychainDependencies {
         randomPassword: String,
         now: Date
     ) -> AgentKeychainDependencies {
+        testing(
+            keychainStore: keychainStore,
+            secretPrompt: secretPrompt,
+            diskImageStore: diskImageStore,
+            browserLauncher: browserLauncher,
+            commandRunner: commandRunner,
+            userPresenceAuthorizer: userPresenceAuthorizer,
+            progressReporter: StandardErrorProgressReporter(),
+            randomPassword: randomPassword,
+            now: now
+        )
+    }
+
+    public static func testing(
+        keychainStore: KeychainStoring,
+        secretPrompt: SecretPrompting,
+        diskImageStore: DiskImageManaging,
+        browserLauncher: BrowserLaunching,
+        commandRunner: CommandRunning,
+        userPresenceAuthorizer: UserPresenceAuthorizing,
+        progressReporter: ProgressMessageReporting,
+        randomPassword: String,
+        now: Date
+    ) -> AgentKeychainDependencies {
         AgentKeychainDependencies(
             keychainStore: keychainStore,
             secretPrompt: secretPrompt,
@@ -118,6 +176,7 @@ public struct AgentKeychainDependencies {
             browserLauncher: browserLauncher,
             commandRunner: commandRunner,
             userPresenceAuthorizer: userPresenceAuthorizer,
+            progressReporter: progressReporter,
             passwordGenerator: FixedPasswordGenerator(password: randomPassword),
             clock: FixedClock(date: now),
             runIDFactory: FixedRunIDFactory()
@@ -244,6 +303,12 @@ private struct DefaultRunIDFactory: RunIDMaking {
 private struct FixedRunIDFactory: RunIDMaking {
     func makeRunID(date: Date) -> String {
         "run_20260628T164011Z_test00"
+    }
+}
+
+final class StandardErrorProgressReporter: ProgressMessageReporting {
+    func report(_ message: String) {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
     }
 }
 

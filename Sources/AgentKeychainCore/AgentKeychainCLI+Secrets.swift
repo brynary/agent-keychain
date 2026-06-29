@@ -29,7 +29,10 @@ extension AgentKeychainCLI {
             throw AgentKeychainError.invalidArguments("secret set requires --role")
         }
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
@@ -187,7 +190,10 @@ extension AgentKeychainCLI {
         }
 
         if options.hasFlag("--allow-raw-secret") {
-            try dependencies.userPresenceAuthorizer.authorize(reason: reason ?? "Allow raw secret stdout")
+            try dependencies.userPresenceAuthorizer.authorize(
+                reason: reason ?? "Allow raw secret stdout",
+                progressReporter: dependencies.progressReporter
+            )
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
                 runID: runID,
@@ -252,7 +258,10 @@ extension AgentKeychainCLI {
             throw AgentKeychainError.invalidArguments("secret delete requires --role")
         }
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
-        try dependencies.userPresenceAuthorizer.authorize(reason: reason)
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
