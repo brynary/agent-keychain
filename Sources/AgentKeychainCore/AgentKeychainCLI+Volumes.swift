@@ -57,6 +57,7 @@ extension AgentKeychainCLI {
             service: service,
             value: password,
             config: config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,
@@ -90,18 +91,17 @@ extension AgentKeychainCLI {
 
     private func volumeUnlock(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume unlock NAME --role ROLE [--reason TEXT]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume unlock NAME [--reason TEXT]")
         }
         let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
-        guard let roleName = options.value(for: "--role") else {
-            throw AgentKeychainError.invalidArguments("volume unlock requires --role")
-        }
+        try rejectRemovedRoleOption(options, command: "volume unlock")
         let reason = options.value(for: "--reason")
         let store = ConfigStore(projectRoot: workingDirectory)
         let config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
+        let metadata = try requireVolume(config: config, name: name)
+        let roleName = metadata.role
         let role = try PolicyEngine.requireRole(config, roleName)
-        let metadata = try requireVolume(config: config, name: name, roleName: roleName, reason: reason, auditURL: store.auditURL)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
         try requireReasonIfNeeded(
@@ -117,6 +117,7 @@ extension AgentKeychainCLI {
         let password = try readKeychainItem(
             service: metadata.keychainService,
             config: config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,
@@ -140,16 +141,15 @@ extension AgentKeychainCLI {
 
     private func volumeLock(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume lock NAME --role ROLE")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume lock NAME")
         }
         let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
-        guard let roleName = options.value(for: "--role") else {
-            throw AgentKeychainError.invalidArguments("volume lock requires --role")
-        }
+        try rejectRemovedRoleOption(options, command: "volume lock")
         let store = ConfigStore(projectRoot: workingDirectory)
         let config = try loadTrustedConfig(store: store, reason: nil)
+        let metadata = try requireVolume(config: config, name: name)
+        let roleName = metadata.role
         _ = try PolicyEngine.requireRole(config, roleName)
-        let metadata = try requireVolume(config: config, name: name, roleName: roleName, reason: nil, auditURL: store.auditURL)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
         if try dependencies.diskImageStore.isBusy(mountpoint: metadata.mountpoint) {
@@ -171,15 +171,23 @@ extension AgentKeychainCLI {
         let selectedName = arguments.first
         let volumes = config.volumes
             .filter { selectedName == nil || $0.key == selectedName }
-            .sorted { $0.key < $1.key }
-        let lines = try volumes.map { name, metadata in
+            .sorted { left, right in
+                if left.value.role == right.value.role {
+                    return left.key < right.key
+                }
+                return left.value.role < right.value.role
+            }
+        let rows = try volumes.map { name, metadata in
             let mounted = try dependencies.diskImageStore.isMounted(
                 imagePath: absoluteProjectPath(workingDirectory: workingDirectory, path: metadata.image),
                 mountpoint: metadata.mountpoint
             )
-            return "\(name) \(mounted ? "mounted" : "unmounted")\n"
-        }.joined()
-        return CommandResult(exitCode: 0, stdout: lines)
+            return [metadata.role, name, mounted ? "mounted" : "unmounted"]
+        }
+        if selectedName != nil {
+            return CommandResult(exitCode: 0, stdout: rows.map { "\($0[1]) \($0[2])\n" }.joined())
+        }
+        return CommandResult(exitCode: 0, stdout: formatTable(headers: ["ROLE", "VOLUME", "STATUS"], rows: rows))
     }
 
     private func volumeDelete(arguments: [String], workingDirectory: URL) throws -> CommandResult {
@@ -215,6 +223,7 @@ extension AgentKeychainCLI {
         try deleteKeychainItem(
             service: metadata.keychainService,
             config: config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,

@@ -344,8 +344,7 @@ func testSecretCommandsAndPolicies() throws {
     try expectContains(list.stdout, "github-readonly\n", "secret list")
 
     let getRegular = try runAgentKeychain([
-        "secret", "get", "github-readonly",
-        "--role", "regular"
+        "secret", "get", "github-readonly"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(getRegular.stdout, "ghp_black_box\n", "regular secret get")
 
@@ -356,16 +355,15 @@ func testSecretCommandsAndPolicies() throws {
     ], workingDirectory: temp.url, stateURL: stateURL, secret: "mercury_black_box")
     try expectEqual(setFinance.exitCode, 0, "finance secret set")
 
-    let crossRole = try runAgentKeychain([
+    let rejectedRole = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
         "--role", "regular"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(crossRole.exitCode, 1, "cross-role secret exit code")
-    try expectContains(crossRole.stderr, "Refusing to use secret mercury-api-key from role finance in role regular", "cross-role secret stderr")
+    try expectEqual(rejectedRole.exitCode, 2, "explicit role secret get exit code")
+    try expectContains(rejectedRole.stderr, "secret get infers the role from secret ownership; omit --role", "explicit role secret stderr")
 
     let rawDenied = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
-        "--role", "finance",
         "--reason", "Review approved invoices"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(rawDenied.exitCode, 1, "finance raw denied exit code")
@@ -373,7 +371,6 @@ func testSecretCommandsAndPolicies() throws {
 
     let rawAllowed = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
-        "--role", "finance",
         "--reason", "Review approved invoices",
         "--allow-raw-secret"
     ], workingDirectory: temp.url, stateURL: stateURL)
@@ -420,8 +417,7 @@ func testVolumeCommandsAndPolicies() throws {
     try expectContains(statusBefore.stdout, "RegularBrowser unmounted", "volume status before unlock")
 
     let unlock = try runAgentKeychain([
-        "volume", "unlock", "RegularBrowser",
-        "--role", "regular"
+        "volume", "unlock", "RegularBrowser"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(unlock.exitCode, 0, "volume unlock")
 
@@ -433,8 +429,7 @@ func testVolumeCommandsAndPolicies() throws {
     try writeState(state, to: stateURL)
 
     let busyLock = try runAgentKeychain([
-        "volume", "lock", "RegularBrowser",
-        "--role", "regular"
+        "volume", "lock", "RegularBrowser"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(busyLock.exitCode, 0, "busy volume lock")
     try expectContains(busyLock.stdout, "Skipped locking volume RegularBrowser because mountpoint is busy", "busy lock stdout")
@@ -444,18 +439,17 @@ func testVolumeCommandsAndPolicies() throws {
     try writeState(state, to: stateURL)
 
     let lock = try runAgentKeychain([
-        "volume", "lock", "RegularBrowser",
-        "--role", "regular"
+        "volume", "lock", "RegularBrowser"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(lock.exitCode, 0, "volume lock")
 
-    let crossRole = try runAgentKeychain([
+    let rejectedRole = try runAgentKeychain([
         "volume", "unlock", "RegularBrowser",
         "--role", "finance",
         "--reason", "Try wrong role"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(crossRole.exitCode, 1, "cross-role volume")
-    try expectContains(crossRole.stderr, "Volume RegularBrowser belongs to role regular, not finance", "cross-role volume stderr")
+    try expectEqual(rejectedRole.exitCode, 2, "explicit role volume")
+    try expectContains(rejectedRole.stderr, "volume unlock infers the role from resource ownership; omit --role", "explicit role volume stderr")
 
     let delete = try runAgentKeychain([
         "volume", "delete", "RegularBrowser",
@@ -506,24 +500,22 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
 
     let expectedUserData = mountpoint + "/ChromeProfiles/GitHub"
     let path = try runAgentKeychain([
-        "browser", "path", "GitHub",
-        "--role", "regular"
+        "browser", "path", "GitHub"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(path.exitCode, 0, "browser path")
     try expectEqual(path.stdout, expectedUserData + "\n", "browser path stdout")
     try expect(FileManager.default.fileExists(atPath: expectedUserData), "browser path should create profile directory")
 
-    let crossRole = try runAgentKeychain([
+    let rejectedRole = try runAgentKeychain([
         "browser", "open", "GitHub",
         "--role", "finance",
         "--reason", "Try wrong role"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(crossRole.exitCode, 1, "cross-role browser")
-    try expectContains(crossRole.stderr, "Browser profile GitHub belongs to role regular, not finance", "cross-role browser stderr")
+    try expectEqual(rejectedRole.exitCode, 2, "explicit role browser")
+    try expectContains(rejectedRole.stderr, "browser open infers the role from resource ownership; omit --role", "explicit role browser stderr")
 
     let oldDetachFlag = try runAgentKeychain([
         "browser", "open", "GitHub",
-        "--role", "regular",
         "--detach-on-exit",
         "--",
         "--headless=new",
@@ -535,7 +527,6 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
 
     let headed = try runAgentKeychain([
         "browser", "open", "GitHub",
-        "--role", "regular",
         "--",
         "https://github.com"
     ], workingDirectory: temp.url, stateURL: stateURL)
@@ -543,7 +534,6 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
 
     let open = try runAgentKeychain([
         "browser", "open", "GitHub",
-        "--role", "regular",
         "--",
         "--headless=new",
         "--remote-debugging-port=9222",

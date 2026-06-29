@@ -96,19 +96,19 @@ agent-keychain browser create GitHub \
 Open the isolated browser profile:
 
 ```sh
-agent-keychain browser open GitHub --role regular
+agent-keychain browser open GitHub
 ```
 
 Open a headed browser for an interactive login:
 
 ```sh
-agent-keychain browser open GitHub --role regular -- https://github.com
+agent-keychain browser open GitHub -- https://github.com
 ```
 
 Open a headless browser for local CDP automation:
 
 ```sh
-agent-keychain browser open GitHub --role regular -- \
+agent-keychain browser open GitHub -- \
   --headless=new \
   --remote-debugging-port=9222 \
   about:blank
@@ -117,19 +117,19 @@ agent-keychain browser open GitHub --role regular -- \
 After closing Chrome, lock the backing volume:
 
 ```sh
-agent-keychain volume lock RegularBrowser --role regular
+agent-keychain volume lock RegularBrowser
 ```
 
 Print the managed Chrome profile path for another launcher:
 
 ```sh
-agent-keychain browser path GitHub --role regular
+agent-keychain browser path GitHub
 ```
 
 Pass additional guarded Chrome arguments after `--`:
 
 ```sh
-agent-keychain browser open GitHub --role regular -- \
+agent-keychain browser open GitHub -- \
   --remote-debugging-port=9222 \
   https://github.com
 ```
@@ -145,6 +145,8 @@ Each project stores local state under `.agent-keychain/`:
   audit.jsonl
   locks/
   keychains/
+    roles/
+  sessions/
   volumes/
 ```
 
@@ -160,7 +162,7 @@ Example roles:
 - `workspace-admin`: identity and workspace administration, with reasons required and secret export denied.
 - `finance`: money movement and billing workflows, with reasons required and secret export denied.
 
-Roles own their own secrets, volumes, and browser profiles. A command running under one role cannot use another role's resources.
+Roles own their own secrets, volumes, and browser profiles. Commands that use one configured resource infer the owning role from trusted config, then apply that role's policy. Commands that create ownership, delete resources, or run a child process still require an explicit role.
 
 ## Commands
 
@@ -171,6 +173,7 @@ agent-keychain init [--project-name NAME]
 agent-keychain status
 agent-keychain config path
 agent-keychain config trust-current --reason TEXT
+agent-keychain config migrate-role-keychains --reason TEXT
 ```
 
 Role commands:
@@ -179,6 +182,8 @@ Role commands:
 agent-keychain role create NAME --reason TEXT [options]
 agent-keychain role list
 agent-keychain role show NAME
+agent-keychain role unlock NAME [--reason TEXT]
+agent-keychain role lock NAME
 agent-keychain role update NAME --reason TEXT [options]
 agent-keychain role delete NAME --reason TEXT
 ```
@@ -187,7 +192,7 @@ Secret commands:
 
 ```sh
 agent-keychain secret set NAME --role ROLE --reason TEXT
-agent-keychain secret get NAME --role ROLE [--reason TEXT] [--allow-raw-secret]
+agent-keychain secret get NAME [--reason TEXT] [--allow-raw-secret]
 agent-keychain secret list [--role ROLE]
 agent-keychain secret delete NAME --role ROLE --reason TEXT
 ```
@@ -196,8 +201,8 @@ Volume commands:
 
 ```sh
 agent-keychain volume create NAME --role ROLE --size SIZE --reason TEXT [--path PATH]
-agent-keychain volume unlock NAME --role ROLE [--reason TEXT]
-agent-keychain volume lock NAME --role ROLE
+agent-keychain volume unlock NAME [--reason TEXT]
+agent-keychain volume lock NAME
 agent-keychain volume status [NAME]
 agent-keychain volume delete NAME --role ROLE --reason TEXT
 ```
@@ -206,8 +211,8 @@ Browser commands:
 
 ```sh
 agent-keychain browser create NAME --role ROLE --volume VOLUME --reason TEXT
-agent-keychain browser open NAME --role ROLE [--reason TEXT] [-- CHROME_ARG...]
-agent-keychain browser path NAME --role ROLE [--reason TEXT]
+agent-keychain browser open NAME [--reason TEXT] [-- CHROME_ARG...]
+agent-keychain browser path NAME [--reason TEXT]
 agent-keychain browser list [--role ROLE]
 agent-keychain browser delete NAME --role ROLE --reason TEXT
 ```
@@ -231,13 +236,14 @@ Close Chrome first, then lock those volumes explicitly with `agent-keychain volu
 
 ## Security Model
 
-See [docs/security-model.md](docs/security-model.md) for the detailed threat model, project keychain storage, APFS volume rules, audit guarantees, and limitations.
+See [docs/security-model.md](docs/security-model.md) for the detailed threat model, role keychain storage, APFS volume rules, audit guarantees, and limitations.
 
 The short version:
 
 - Secret values never live in `config.json`.
 - Disk-image passwords never live in `config.json`.
-- The generated project-keychain password is stored in the login keychain; unsigned CLI builds fall back to an in-process user-presence check when macOS rejects keychain `userPresence` storage.
+- Role-owned secrets and disk-image passwords live in per-role keychains.
+- Role keychain passwords are stored in the login keychain behind user presence; each role unlock has a 5-minute TTL.
 - Passwords are passed to `hdiutil` through standard input, not arguments.
 - Chrome launches with `--user-data-dir` inside a managed encrypted volume.
 - Chrome passthrough arguments cannot override the managed profile path, and remote debugging addresses are restricted to loopback.

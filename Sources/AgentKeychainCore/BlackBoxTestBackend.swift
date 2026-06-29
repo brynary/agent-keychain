@@ -11,6 +11,17 @@ public struct BlackBoxProjectPassword: Codable, Equatable, Sendable {
     public var password: String
 }
 
+public struct BlackBoxRoleKeychainCreation: Codable, Equatable, Sendable {
+    public var path: String
+    public var password: String
+    public var ttlSeconds: Int
+}
+
+public struct BlackBoxRolePassword: Codable, Equatable, Sendable {
+    public var service: String
+    public var password: String
+}
+
 public struct BlackBoxCreatedImage: Codable, Equatable, Sendable {
     public var imagePath: String
     public var size: String
@@ -37,6 +48,11 @@ public struct BlackBoxCommandInvocation: Codable, Equatable, Sendable {
 public struct BlackBoxTestState: Codable, Equatable, Sendable {
     public var projectKeychainCreations: [BlackBoxProjectKeychainCreation]
     public var projectPasswords: [BlackBoxProjectPassword]
+    public var roleKeychainCreations: [BlackBoxRoleKeychainCreation]
+    public var rolePasswords: [BlackBoxRolePassword]
+    public var roleUnlocks: [String]
+    public var roleLocks: [String]
+    public var unlockedRoles: [String]
     public var keychainItems: [String: String]
     public var deletedServices: [String]
     public var createdImages: [BlackBoxCreatedImage]
@@ -57,6 +73,11 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
     public init(
         projectKeychainCreations: [BlackBoxProjectKeychainCreation] = [],
         projectPasswords: [BlackBoxProjectPassword] = [],
+        roleKeychainCreations: [BlackBoxRoleKeychainCreation] = [],
+        rolePasswords: [BlackBoxRolePassword] = [],
+        roleUnlocks: [String] = [],
+        roleLocks: [String] = [],
+        unlockedRoles: [String] = [],
         keychainItems: [String: String] = [:],
         deletedServices: [String] = [],
         createdImages: [BlackBoxCreatedImage] = [],
@@ -76,6 +97,11 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
     ) {
         self.projectKeychainCreations = projectKeychainCreations
         self.projectPasswords = projectPasswords
+        self.roleKeychainCreations = roleKeychainCreations
+        self.rolePasswords = rolePasswords
+        self.roleUnlocks = roleUnlocks
+        self.roleLocks = roleLocks
+        self.unlockedRoles = unlockedRoles
         self.keychainItems = keychainItems
         self.deletedServices = deletedServices
         self.createdImages = createdImages
@@ -191,6 +217,55 @@ private final class BlackBoxKeychainStore: KeychainStoring {
             state.deletedServices.append(service)
             state.keychainItems.removeValue(forKey: service)
         }
+    }
+
+    func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
+        try store.update { state in
+            state.roleKeychainCreations.append(BlackBoxRoleKeychainCreation(path: path, password: password, ttlSeconds: ttlSeconds))
+        }
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: path).deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: path, contents: Data())
+    }
+
+    func storeRoleKeychainPassword(service: String, password: String) throws {
+        try store.update { state in
+            state.rolePasswords.append(BlackBoxRolePassword(service: service, password: password))
+        }
+    }
+
+    func unlockRoleKeychain(roleName: String, keychain: RoleKeychainConfig) throws {
+        try store.update { state in
+            state.roleUnlocks.append(roleName)
+            if !state.unlockedRoles.contains(roleName) {
+                state.unlockedRoles.append(roleName)
+            }
+        }
+    }
+
+    func lockRoleKeychain(roleName: String, keychain: RoleKeychainConfig) throws {
+        try store.update { state in
+            state.roleLocks.append(roleName)
+            state.unlockedRoles.removeAll { $0 == roleName }
+        }
+    }
+
+    func isRoleKeychainUnlocked(roleName: String, keychain: RoleKeychainConfig) throws -> Bool {
+        try store.read().unlockedRoles.contains(roleName)
+    }
+
+    func storeGenericPassword(service: String, value: String, roleKeychain: RoleKeychainConfig) throws {
+        try storeGenericPassword(service: service, value: value)
+    }
+
+    func readGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws -> String {
+        try readGenericPassword(service: service)
+    }
+
+    func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
+        try deleteGenericPassword(service: service)
     }
 }
 

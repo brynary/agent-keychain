@@ -24,11 +24,17 @@ public struct ConfigStore {
         projectDirectoryURL.appendingPathComponent("audit.jsonl")
     }
 
+    public var sessionsDirectoryURL: URL {
+        projectDirectoryURL.appendingPathComponent("sessions", isDirectory: true)
+    }
+
     public func createProjectDirectories() throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: projectDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: projectDirectoryURL.appendingPathComponent("locks", isDirectory: true), withIntermediateDirectories: true)
         try fileManager.createDirectory(at: projectDirectoryURL.appendingPathComponent("keychains", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: projectDirectoryURL.appendingPathComponent("keychains/roles", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: sessionsDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: projectDirectoryURL.appendingPathComponent("volumes", isDirectory: true), withIntermediateDirectories: true)
         if !fileManager.fileExists(atPath: auditURL.path) {
             fileManager.createFile(atPath: auditURL.path, contents: nil)
@@ -70,6 +76,31 @@ public struct ConfigStore {
             updatedAt: iso8601UTC(updatedAt)
         )
         try writeAtomically(CanonicalJSON.encode(integrity), to: integrityURL)
+    }
+
+    public func roleSessionURL(roleName: String) -> URL {
+        sessionsDirectoryURL.appendingPathComponent("\(sanitizeProjectName(roleName)).json")
+    }
+
+    public func loadRoleSession(roleName: String) throws -> RoleKeychainSession? {
+        let url = roleSessionURL(roleName: roleName)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return try JSONDecoder().decode(RoleKeychainSession.self, from: Data(contentsOf: url))
+    }
+
+    public func writeRoleSession(_ session: RoleKeychainSession, roleName: String) throws {
+        try FileManager.default.createDirectory(at: sessionsDirectoryURL, withIntermediateDirectories: true)
+        try writeAtomically(CanonicalJSON.encode(session), to: roleSessionURL(roleName: roleName))
+    }
+
+    public func deleteRoleSession(roleName: String) throws {
+        let url = roleSessionURL(roleName: roleName)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: url)
     }
 
     private func writeAtomically(_ data: Data, to destination: URL) throws {

@@ -3,7 +3,7 @@ import Foundation
 extension AgentKeychainCLI {
     func role(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let subcommand = arguments.first else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain role <create|list|show>")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain role <create|list|show|update|delete|unlock|lock>")
         }
 
         switch subcommand {
@@ -17,6 +17,10 @@ extension AgentKeychainCLI {
             return try roleUpdate(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
         case "delete":
             return try roleDelete(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "unlock":
+            return try roleUnlock(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "lock":
+            return try roleLock(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
         default:
             throw AgentKeychainError.invalidArguments("Unknown role command: \(subcommand)")
         }
@@ -37,6 +41,7 @@ extension AgentKeychainCLI {
         )
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try store.loadConfig()
+        try configureKeychainContext(config: config, workingDirectory: workingDirectory)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
 
@@ -63,10 +68,13 @@ extension AgentKeychainCLI {
 
         let oldHash = try config.canonicalHash()
         let description = options.value(for: "--description") ?? ""
+        let roleKeychain = makeRoleKeychainConfig(config: config, roleName: name)
+        try createRoleKeychain(roleKeychain)
         config.roles[name] = RoleConfig(
             description: description,
             requireReason: options.hasFlag("--require-reason"),
-            allowSecretExport: !options.hasFlag("--deny-secret-export")
+            allowSecretExport: !options.hasFlag("--deny-secret-export"),
+            keychain: roleKeychain
         )
         let newHash = try config.canonicalHash()
 
@@ -240,5 +248,51 @@ extension AgentKeychainCLI {
         try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: config.project.name, event: "config_mutation_succeeded", result: "success", role: name, reason: reason, oldConfigHash: oldHash, newConfigHash: newHash))
         try store.writeIntegrity(for: config, updatedAt: dependencies.clock.now())
         return CommandResult(exitCode: 0, stdout: "Deleted role \(name)\n")
+    }
+
+    private func roleUnlock(arguments: [String], workingDirectory: URL) throws -> CommandResult {
+        guard let name = arguments.first, !name.hasPrefix("--") else {
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain role unlock NAME [--reason TEXT]")
+        }
+        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
+        guard options.value(for: "--role") == nil else {
+            throw AgentKeychainError.invalidArguments("role unlock takes a role name argument; omit --role")
+        }
+        let reason = options.value(for: "--reason")
+        let store = ConfigStore(projectRoot: workingDirectory)
+        let config = try loadTrustedConfig(store: store, reason: reason)
+        try configureKeychainContext(config: config, workingDirectory: workingDirectory)
+        let role = try PolicyEngine.requireRole(config, name)
+        let audit = AuditLog(url: store.auditURL)
+        let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
+        try requireReasonIfNeeded(config: config, roleName: name, role: role, reason: reason, resource: nil, audit: audit, runID: runID)
+        _ = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: name, resource: nil, reason: reason)
+        return CommandResult(exitCode: 0, stdout: "Unlocked role \(name)\n")
+    }
+
+    private func roleLock(arguments: [String], workingDirectory: URL) throws -> CommandResult {
+        guard let name = arguments.first, !name.hasPrefix("--") else {
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain role lock NAME")
+        }
+        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
+        guard options.value(for: "--role") == nil else {
+            throw AgentKeychainError.invalidArguments("role lock takes a role name argument; omit --role")
+        }
+        let store = ConfigStore(projectRoot: workingDirectory)
+        let config = try loadTrustedConfig(store: store, reason: nil)
+        try configureKeychainContext(config: config, workingDirectory: workingDirectory)
+        let keychain = try requireRoleKeychain(config: config, roleName: name)
+        try dependencies.keychainStore.lockRoleKeychain(roleName: name, keychain: keychain)
+        try store.deleteRoleSession(roleName: name)
+        let audit = AuditLog(url: store.auditURL)
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: dependencies.runIDFactory.makeRunID(date: dependencies.clock.now()),
+            project: config.project.name,
+            event: "role_keychain_locked",
+            result: "success",
+            role: name
+        ))
+        return CommandResult(exitCode: 0, stdout: "Locked role \(name)\n")
     }
 }

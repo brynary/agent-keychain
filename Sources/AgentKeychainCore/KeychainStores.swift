@@ -15,6 +15,7 @@ public enum ProjectKeychainUnlockPolicy {
 public final class MacOSKeychainStore: KeychainStoring {
     private let account = "default"
     private let progressReporter: ProgressMessageReporting
+    private var projectRoot: URL?
     private var projectKeychainPath: String?
     private var projectKeychainPasswordService: String?
 
@@ -46,6 +47,7 @@ public final class MacOSKeychainStore: KeychainStoring {
     }
 
     public func useProject(config: ProjectConfig, projectRoot: URL) throws {
+        self.projectRoot = projectRoot
         projectKeychainPasswordService = config.project.keychainPasswordService
         projectKeychainPath = projectRoot.appendingPathComponent(config.project.keychainPath).path
     }
@@ -77,6 +79,62 @@ public final class MacOSKeychainStore: KeychainStoring {
         }
     }
 
+    public func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
+        let absolutePath = try absoluteKeychainPath(path)
+        guard !FileManager.default.fileExists(atPath: absolutePath) else {
+            throw AgentKeychainError.filesystem("Role keychain already exists at \(absolutePath). Move it aside before retrying.")
+        }
+        let keychain = try createKeychain(path: absolutePath, password: password, label: "role")
+        try applyRoleKeychainSettings(keychain: keychain, ttlSeconds: ttlSeconds)
+        SecKeychainLock(keychain)
+    }
+
+    public func storeRoleKeychainPassword(service: String, password: String) throws {
+        try storeProjectKeychainPassword(service: service, password: password)
+    }
+
+    public func unlockRoleKeychain(roleName: String, keychain: RoleKeychainConfig) throws {
+        let keychainRef = try openKeychainWithoutInteraction(path: try absoluteKeychainPath(keychain.path), label: "role")
+        let password = try readLoginKeychainItem(
+            service: keychain.passwordService,
+            prompt: "Authenticate to unlock the agent-keychain \(roleName) role keychain"
+        )
+        try unlockKeychainWithoutInteraction(keychainRef, password: password, label: "role")
+        try applyRoleKeychainSettings(keychain: keychainRef, ttlSeconds: keychain.ttlSeconds)
+    }
+
+    public func lockRoleKeychain(roleName: String, keychain: RoleKeychainConfig) throws {
+        let keychainRef = try openKeychainWithoutInteraction(path: try absoluteKeychainPath(keychain.path), label: "role")
+        let status = SecKeychainLock(keychainRef)
+        guard status == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to lock role keychain: \(securityMessage(status))")
+        }
+    }
+
+    public func isRoleKeychainUnlocked(roleName: String, keychain: RoleKeychainConfig) throws -> Bool {
+        let keychainRef = try openKeychainWithoutInteraction(path: try absoluteKeychainPath(keychain.path), label: "role")
+        return try isUnlockedWithoutInteraction(keychain: keychainRef)
+    }
+
+    public func storeGenericPassword(service: String, value: String, roleKeychain: RoleKeychainConfig) throws {
+        try withRoleKeychain(roleKeychain) { keychain in
+            try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
+            try addGenericPassword(service: service, value: value, keychain: keychain)
+        }
+    }
+
+    public func readGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws -> String {
+        try withRoleKeychain(roleKeychain) { keychain in
+            try readGenericPassword(service: service, keychain: keychain)
+        }
+    }
+
+    public func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
+        try withRoleKeychain(roleKeychain) { keychain in
+            try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
+        }
+    }
+
     private func withUnlockedProjectKeychain<T>(_ body: (SecKeychain) throws -> T) throws -> T {
         guard let path = projectKeychainPath, let passwordService = projectKeychainPasswordService else {
             throw AgentKeychainError.filesystem("Project keychain context is not configured")
@@ -85,21 +143,123 @@ public final class MacOSKeychainStore: KeychainStoring {
             service: passwordService,
             prompt: "Authenticate to unlock the agent-keychain project keychain"
         )
-        var keychain: SecKeychain?
-        var status = SecKeychainOpen(path, &keychain)
-        guard status == errSecSuccess, let keychain else {
-            throw AgentKeychainError.filesystem("Unable to open project keychain: \(securityMessage(status))")
-        }
-        status = password.withCString { passwordPointer in
-            SecKeychainUnlock(keychain, UInt32(strlen(passwordPointer)), passwordPointer, ProjectKeychainUnlockPolicy.useProvidedPassword)
-        }
-        guard status == errSecSuccess else {
-            throw AgentKeychainError.filesystem("Unable to unlock project keychain: \(securityMessage(status))")
-        }
+        let keychain = try openKeychainWithoutInteraction(path: path, label: "project")
+        try unlockKeychainWithoutInteraction(keychain, password: password, label: "project")
         defer {
             SecKeychainLock(keychain)
         }
         return try body(keychain)
+    }
+
+    private func withRoleKeychain<T>(_ roleKeychain: RoleKeychainConfig, _ body: (SecKeychain) throws -> T) throws -> T {
+        let keychain = try openKeychainWithoutInteraction(path: try absoluteKeychainPath(roleKeychain.path), label: "role")
+        guard try isUnlockedWithoutInteraction(keychain: keychain) else {
+            throw AgentKeychainError.filesystem("Role keychain is locked")
+        }
+        return try body(keychain)
+    }
+
+    private func createKeychainIfNeeded(path: String, password: String, label: String) throws {
+        if FileManager.default.fileExists(atPath: path) {
+            return
+        }
+        let keychain = try createKeychain(path: path, password: password, label: label)
+        SecKeychainLock(keychain)
+    }
+
+    private func createKeychain(path: String, password: String, label: String) throws -> SecKeychain {
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+
+        var keychain: SecKeychain?
+        let status = password.withCString { passwordPointer in
+            SecKeychainCreate(path, UInt32(strlen(passwordPointer)), passwordPointer, false, nil, &keychain)
+        }
+        guard status == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to create \(label) keychain: \(securityMessage(status))")
+        }
+        guard let keychain else {
+            throw AgentKeychainError.filesystem("Unable to create \(label) keychain")
+        }
+        return keychain
+    }
+
+    private func openKeychain(path: String, label: String) throws -> SecKeychain {
+        var keychain: SecKeychain?
+        let status = SecKeychainOpen(path, &keychain)
+        guard status == errSecSuccess, let keychain else {
+            throw AgentKeychainError.filesystem("Unable to open \(label) keychain: \(securityMessage(status))")
+        }
+        return keychain
+    }
+
+    private func openKeychainWithoutInteraction(path: String, label: String) throws -> SecKeychain {
+        try withKeychainUserInteractionAllowed(false) {
+            try openKeychain(path: path, label: label)
+        }
+    }
+
+    private func unlockKeychainWithoutInteraction(_ keychain: SecKeychain, password: String, label: String) throws {
+        try withKeychainUserInteractionAllowed(false) {
+            let status = password.withCString { passwordPointer in
+                SecKeychainUnlock(keychain, UInt32(strlen(passwordPointer)), passwordPointer, ProjectKeychainUnlockPolicy.useProvidedPassword)
+            }
+            guard status == errSecSuccess else {
+                throw AgentKeychainError.filesystem("Unable to unlock \(label) keychain: \(securityMessage(status))")
+            }
+        }
+    }
+
+    private func absoluteKeychainPath(_ path: String) throws -> String {
+        if path.hasPrefix("/") {
+            return path
+        }
+        guard let projectRoot else {
+            throw AgentKeychainError.filesystem("Project keychain context is not configured")
+        }
+        return projectRoot.appendingPathComponent(path).path
+    }
+
+    private func applyRoleKeychainSettings(keychain: SecKeychain, ttlSeconds: Int) throws {
+        var settings = SecKeychainSettings()
+        settings.version = UInt32(SEC_KEYCHAIN_SETTINGS_VERS1)
+        settings.lockOnSleep = true
+        settings.useLockInterval = true
+        settings.lockInterval = UInt32(ttlSeconds)
+        let status = SecKeychainSetSettings(keychain, &settings)
+        guard status == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to configure role keychain TTL: \(securityMessage(status))")
+        }
+    }
+
+    private func isUnlocked(keychain: SecKeychain) throws -> Bool {
+        var keychainStatus: SecKeychainStatus = 0
+        let status = SecKeychainGetStatus(keychain, &keychainStatus)
+        guard status == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to read keychain status: \(securityMessage(status))")
+        }
+        return (keychainStatus & SecKeychainStatus(kSecUnlockStateStatus)) != 0
+    }
+
+    private func isUnlockedWithoutInteraction(keychain: SecKeychain) throws -> Bool {
+        try withKeychainUserInteractionAllowed(false) {
+            try isUnlocked(keychain: keychain)
+        }
+    }
+
+    private func withKeychainUserInteractionAllowed<T>(_ allowed: Bool, _ body: () throws -> T) throws -> T {
+        var previous = DarwinBoolean(false)
+        let previousStatus = SecKeychainGetUserInteractionAllowed(&previous)
+        let setStatus = SecKeychainSetUserInteractionAllowed(allowed)
+        defer {
+            if previousStatus == errSecSuccess {
+                SecKeychainSetUserInteractionAllowed(previous.boolValue)
+            }
+        }
+        guard setStatus == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to configure keychain interaction: \(securityMessage(setStatus))")
+        }
+        return try body()
     }
 
     private func storeLoginKeychainItem(service: String, value: String, requireUserPresence: Bool) throws {
@@ -172,19 +332,21 @@ public final class MacOSKeychainStore: KeychainStoring {
     }
 
     private func addGenericPassword(service: String, value: String, keychain: SecKeychain) throws {
-        let status = service.withCString { servicePointer in
-            account.withCString { accountPointer in
-                value.withCString { valuePointer in
-                    SecKeychainAddGenericPassword(
-                        keychain,
-                        UInt32(strlen(servicePointer)),
-                        servicePointer,
-                        UInt32(strlen(accountPointer)),
-                        accountPointer,
-                        UInt32(strlen(valuePointer)),
-                        valuePointer,
-                        nil
-                    )
+        let status = try withKeychainUserInteractionAllowed(false) {
+            service.withCString { servicePointer in
+                account.withCString { accountPointer in
+                    value.withCString { valuePointer in
+                        SecKeychainAddGenericPassword(
+                            keychain,
+                            UInt32(strlen(servicePointer)),
+                            servicePointer,
+                            UInt32(strlen(accountPointer)),
+                            accountPointer,
+                            UInt32(strlen(valuePointer)),
+                            valuePointer,
+                            nil
+                        )
+                    }
                 }
             }
         }
@@ -196,18 +358,20 @@ public final class MacOSKeychainStore: KeychainStoring {
     private func readGenericPassword(service: String, keychain: SecKeychain) throws -> String {
         var length: UInt32 = 0
         var data: UnsafeMutableRawPointer?
-        let status = service.withCString { servicePointer in
-            account.withCString { accountPointer in
-                SecKeychainFindGenericPassword(
-                    keychain,
-                    UInt32(strlen(servicePointer)),
-                    servicePointer,
-                    UInt32(strlen(accountPointer)),
-                    accountPointer,
-                    &length,
-                    &data,
-                    nil
-                )
+        let status = try withKeychainUserInteractionAllowed(false) {
+            service.withCString { servicePointer in
+                account.withCString { accountPointer in
+                    SecKeychainFindGenericPassword(
+                        keychain,
+                        UInt32(strlen(servicePointer)),
+                        servicePointer,
+                        UInt32(strlen(accountPointer)),
+                        accountPointer,
+                        &length,
+                        &data,
+                        nil
+                    )
+                }
             }
         }
         guard status == errSecSuccess, let data else {
@@ -225,18 +389,20 @@ public final class MacOSKeychainStore: KeychainStoring {
 
     private func deleteGenericPasswordIfPresent(service: String, keychain: SecKeychain) throws {
         var item: SecKeychainItem?
-        let status = service.withCString { servicePointer in
-            account.withCString { accountPointer in
-                SecKeychainFindGenericPassword(
-                    keychain,
-                    UInt32(strlen(servicePointer)),
-                    servicePointer,
-                    UInt32(strlen(accountPointer)),
-                    accountPointer,
-                    nil,
-                    nil,
-                    &item
-                )
+        let status = try withKeychainUserInteractionAllowed(false) {
+            service.withCString { servicePointer in
+                account.withCString { accountPointer in
+                    SecKeychainFindGenericPassword(
+                        keychain,
+                        UInt32(strlen(servicePointer)),
+                        servicePointer,
+                        UInt32(strlen(accountPointer)),
+                        accountPointer,
+                        nil,
+                        nil,
+                        &item
+                    )
+                }
             }
         }
         guard status == errSecSuccess || status == errSecItemNotFound else {

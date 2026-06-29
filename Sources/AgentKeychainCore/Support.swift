@@ -32,6 +32,14 @@ public protocol KeychainStoring: AnyObject {
     func storeGenericPassword(service: String, value: String) throws
     func readGenericPassword(service: String) throws -> String
     func deleteGenericPassword(service: String) throws
+    func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws
+    func storeRoleKeychainPassword(service: String, password: String) throws
+    func unlockRoleKeychain(roleName: String, keychain: RoleKeychainConfig) throws
+    func lockRoleKeychain(roleName: String, keychain: RoleKeychainConfig) throws
+    func isRoleKeychainUnlocked(roleName: String, keychain: RoleKeychainConfig) throws -> Bool
+    func storeGenericPassword(service: String, value: String, roleKeychain: RoleKeychainConfig) throws
+    func readGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws -> String
+    func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws
 }
 
 public protocol SecretPrompting: AnyObject {

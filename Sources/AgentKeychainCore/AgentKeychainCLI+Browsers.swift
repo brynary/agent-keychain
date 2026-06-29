@@ -49,6 +49,9 @@ extension AgentKeychainCLI {
         let store = ConfigStore(projectRoot: workingDirectory)
         var config = try loadTrustedConfig(store: store, reason: reason)
         _ = try PolicyEngine.requireRole(config, roleName)
+        guard config.browsers[name] == nil else {
+            throw AgentKeychainError.invalidArguments("Browser profile already exists: \(name)")
+        }
         let volume = try requireVolume(config: config, name: volumeName, roleName: roleName, reason: reason, auditURL: store.auditURL)
         guard volume.role == roleName else {
             throw AgentKeychainError.policy("Volume \(volumeName) belongs to role \(volume.role), not \(roleName).")
@@ -69,33 +72,31 @@ extension AgentKeychainCLI {
 
     private func browserOpen(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser open NAME --role ROLE [--reason TEXT] [-- CHROME_ARG...]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser open NAME [--reason TEXT] [-- CHROME_ARG...]")
         }
         let (optionArguments, rawChromeArguments) = splitPassthroughArguments(Array(arguments.dropFirst()))
         if optionArguments.contains("--detach-on-exit") {
-            throw AgentKeychainError.invalidArguments("browser open no longer accepts --detach-on-exit. Close Chrome, then run `agent-keychain volume lock NAME --role ROLE`.")
+            throw AgentKeychainError.invalidArguments("browser open no longer accepts --detach-on-exit. Close Chrome, then run `agent-keychain volume lock NAME`.")
         }
         let options = try ParsedOptions(arguments: optionArguments)
+        try rejectRemovedRoleOption(options, command: "browser open")
         let chromeArguments = try validatedChromeArguments(rawChromeArguments)
-        guard let roleName = options.value(for: "--role") else {
-            throw AgentKeychainError.invalidArguments("browser open requires --role")
-        }
         let reason = options.value(for: "--reason")
         let store = ConfigStore(projectRoot: workingDirectory)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
         let resolved = try resolveBrowserProfile(
             name: name,
-            roleName: roleName,
             reason: reason,
             store: store,
             workingDirectory: workingDirectory,
             audit: audit,
             runID: runID
         )
+        let roleName = resolved.browser.role
         let managedLock = try ManagedVolumeLock.acquire(projectRoot: workingDirectory, volumeName: resolved.browser.volume)
         defer { managedLock.release() }
-        try mountBrowserVolumeIfNeeded(resolved, roleName: roleName, reason: reason, audit: audit, runID: runID, workingDirectory: workingDirectory)
+        try mountBrowserVolumeIfNeeded(resolved, roleName: roleName, reason: reason, store: store, audit: audit, runID: runID, workingDirectory: workingDirectory)
         try ensureBrowserProfileDirectory(resolved)
         try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: resolved.config.project.name, event: "browser_opened", result: "success", role: roleName, resource: name, reason: reason))
         try dependencies.browserLauncher.launchChrome(userDataDir: resolved.userDataDir, additionalArguments: chromeArguments)
@@ -104,28 +105,26 @@ extension AgentKeychainCLI {
 
     private func browserPath(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser path NAME --role ROLE [--reason TEXT]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser path NAME [--reason TEXT]")
         }
         let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
-        guard let roleName = options.value(for: "--role") else {
-            throw AgentKeychainError.invalidArguments("browser path requires --role")
-        }
+        try rejectRemovedRoleOption(options, command: "browser path")
         let reason = options.value(for: "--reason")
         let store = ConfigStore(projectRoot: workingDirectory)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
         let resolved = try resolveBrowserProfile(
             name: name,
-            roleName: roleName,
             reason: reason,
             store: store,
             workingDirectory: workingDirectory,
             audit: audit,
             runID: runID
         )
+        let roleName = resolved.browser.role
         let managedLock = try ManagedVolumeLock.acquire(projectRoot: workingDirectory, volumeName: resolved.browser.volume)
         defer { managedLock.release() }
-        try mountBrowserVolumeIfNeeded(resolved, roleName: roleName, reason: reason, audit: audit, runID: runID, workingDirectory: workingDirectory)
+        try mountBrowserVolumeIfNeeded(resolved, roleName: roleName, reason: reason, store: store, audit: audit, runID: runID, workingDirectory: workingDirectory)
         try ensureBrowserProfileDirectory(resolved)
         try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: resolved.config.project.name, event: "browser_path_resolved", result: "success", role: roleName, resource: name, reason: reason))
         return CommandResult(exitCode: 0, stdout: resolved.userDataDir + "\n")
@@ -135,11 +134,22 @@ extension AgentKeychainCLI {
         let options = try ParsedOptions(arguments: arguments)
         let roleFilter = options.value(for: "--role")
         let config = try ConfigStore(projectRoot: workingDirectory).loadConfig()
-        let names = config.browsers
-            .filter { _, metadata in roleFilter == nil || metadata.role == roleFilter }
-            .keys
-            .sorted()
-        return CommandResult(exitCode: 0, stdout: names.map { "\($0)\n" }.joined())
+        if let roleFilter {
+            let names = config.browsers
+                .filter { _, metadata in metadata.role == roleFilter }
+                .keys
+                .sorted()
+            return CommandResult(exitCode: 0, stdout: names.map { "\($0)\n" }.joined())
+        }
+        let rows = config.browsers
+            .sorted { left, right in
+                if left.value.role == right.value.role {
+                    return left.key < right.key
+                }
+                return left.value.role < right.value.role
+            }
+            .map { name, metadata in [metadata.role, name] }
+        return CommandResult(exitCode: 0, stdout: formatTable(headers: ["ROLE", "BROWSER"], rows: rows))
     }
 
     private func browserDelete(arguments: [String], workingDirectory: URL) throws -> CommandResult {
@@ -180,7 +190,6 @@ extension AgentKeychainCLI {
 
     private func resolveBrowserProfile(
         name: String,
-        roleName: String,
         reason: String?,
         store: ConfigStore,
         workingDirectory: URL,
@@ -189,14 +198,9 @@ extension AgentKeychainCLI {
     ) throws -> ResolvedBrowserProfile {
         let config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
+        let browser = try requireBrowser(config: config, name: name)
+        let roleName = browser.role
         let role = try PolicyEngine.requireRole(config, roleName)
-        guard let browser = config.browsers[name] else {
-            throw AgentKeychainError.invalidArguments("Unknown browser profile: \(name)")
-        }
-        if browser.role != roleName {
-            try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: config.project.name, event: "policy_rejection", result: "denied", role: roleName, resource: name, reason: reason, message: "Browser profile \(name) belongs to role \(browser.role), not \(roleName)"))
-            throw AgentKeychainError.policy("Browser profile \(name) belongs to role \(browser.role), not \(roleName).")
-        }
         try requireReasonIfNeeded(
             config: config,
             roleName: roleName,
@@ -215,6 +219,7 @@ extension AgentKeychainCLI {
         _ resolved: ResolvedBrowserProfile,
         roleName: String,
         reason: String?,
+        store: ConfigStore,
         audit: AuditLog,
         runID: String,
         workingDirectory: URL
@@ -226,6 +231,7 @@ extension AgentKeychainCLI {
         let password = try readKeychainItem(
             service: resolved.volume.keychainService,
             config: resolved.config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,

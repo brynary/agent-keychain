@@ -72,6 +72,7 @@ extension AgentKeychainCLI {
             environment[binding.environmentName] = try readKeychainItem(
                 service: secret.keychainService,
                 config: config,
+                store: store,
                 audit: audit,
                 runID: runID,
                 role: request.role,
@@ -108,6 +109,7 @@ extension AgentKeychainCLI {
                 let password = try readKeychainItem(
                     service: volume.keychainService,
                     config: config,
+                    store: store,
                     audit: audit,
                     runID: runID,
                     role: request.role,
@@ -148,6 +150,7 @@ extension AgentKeychainCLI {
                 let password = try readKeychainItem(
                     service: volume.keychainService,
                     config: config,
+                    store: store,
                     audit: audit,
                     runID: runID,
                     role: request.role,

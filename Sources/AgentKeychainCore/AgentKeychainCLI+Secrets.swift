@@ -37,6 +37,9 @@ extension AgentKeychainCLI {
         var config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
         _ = try PolicyEngine.requireRole(config, roleName)
+        if let existing = config.secrets[name], existing.role != roleName {
+            throw AgentKeychainError.policy("Secret \(name) belongs to role \(existing.role), not \(roleName). Delete it before recreating it for another role.")
+        }
         let oldHash = try config.canonicalHash()
         let service = secretService(role: roleName, name: name)
         let value = try dependencies.secretPrompt.readSecret(prompt: "Secret value for \(name)")
@@ -46,6 +49,7 @@ extension AgentKeychainCLI {
             service: service,
             value: value,
             config: config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,
@@ -100,20 +104,17 @@ extension AgentKeychainCLI {
 
     private func secretGet(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain secret get NAME --role ROLE [--reason TEXT] [--allow-raw-secret]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain secret get NAME [--reason TEXT] [--allow-raw-secret]")
         }
         let options = try ParsedOptions(arguments: Array(arguments.dropFirst()), booleanFlags: ["--allow-raw-secret"])
-        guard let roleName = options.value(for: "--role") else {
-            throw AgentKeychainError.invalidArguments("secret get requires --role")
-        }
+        try rejectRemovedRoleOption(options, command: "secret get")
         let reason = options.value(for: "--reason")
         let store = ConfigStore(projectRoot: workingDirectory)
         let config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
+        let secret = try requireSecret(config: config, name: name)
+        let roleName = secret.role
         let role = try PolicyEngine.requireRole(config, roleName)
-        guard let secret = config.secrets[name] else {
-            throw AgentKeychainError.invalidArguments("Unknown secret: \(name)")
-        }
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
         try audit.append(AuditEvent(
@@ -126,32 +127,6 @@ extension AgentKeychainCLI {
             resource: name,
             reason: reason
         ))
-
-        if secret.role != roleName {
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "policy_rejection",
-                result: "denied",
-                role: roleName,
-                resource: name,
-                reason: reason,
-                message: "Secret \(name) belongs to role \(secret.role), not \(roleName)"
-            ))
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "command_failed",
-                result: "failed",
-                role: roleName,
-                resource: name,
-                reason: reason,
-                message: "Secret \(name) belongs to role \(secret.role), not \(roleName)"
-            ))
-            throw AgentKeychainError.policy("Refusing to use secret \(name) from role \(secret.role) in role \(roleName).\nRe-run with --role \(secret.role) --reason \"...\"")
-        }
 
         try requireReasonIfNeeded(
             config: config,
@@ -209,6 +184,7 @@ extension AgentKeychainCLI {
         let value = try readKeychainItem(
             service: secret.keychainService,
             config: config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,
@@ -242,11 +218,22 @@ extension AgentKeychainCLI {
         let options = try ParsedOptions(arguments: arguments)
         let roleFilter = options.value(for: "--role")
         let config = try ConfigStore(projectRoot: workingDirectory).loadConfig()
-        let names = config.secrets
-            .filter { _, metadata in roleFilter == nil || metadata.role == roleFilter }
-            .keys
-            .sorted()
-        return CommandResult(exitCode: 0, stdout: names.map { "\($0)\n" }.joined())
+        if let roleFilter {
+            let names = config.secrets
+                .filter { _, metadata in metadata.role == roleFilter }
+                .keys
+                .sorted()
+            return CommandResult(exitCode: 0, stdout: names.map { "\($0)\n" }.joined())
+        }
+        let rows = config.secrets
+            .sorted { left, right in
+                if left.value.role == right.value.role {
+                    return left.key < right.key
+                }
+                return left.value.role < right.value.role
+            }
+            .map { name, metadata in [metadata.role, name] }
+        return CommandResult(exitCode: 0, stdout: formatTable(headers: ["ROLE", "SECRET"], rows: rows))
     }
 
     private func secretDelete(arguments: [String], workingDirectory: URL) throws -> CommandResult {
@@ -279,6 +266,7 @@ extension AgentKeychainCLI {
         try deleteKeychainItem(
             service: secret.keychainService,
             config: config,
+            store: store,
             audit: audit,
             runID: runID,
             role: roleName,
