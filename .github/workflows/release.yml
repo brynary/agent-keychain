@@ -92,17 +92,20 @@ jobs:
               "$CHECKSUM" \
               --clobber
           else
-            prerelease_flag=()
             if [[ "$RELEASE_TAG" == *-* ]]; then
-              prerelease_flag=(--prerelease)
+              gh release create "$RELEASE_TAG" \
+                "$ARCHIVE" \
+                "$CHECKSUM" \
+                --title "$RELEASE_TAG" \
+                --generate-notes \
+                --prerelease
+            else
+              gh release create "$RELEASE_TAG" \
+                "$ARCHIVE" \
+                "$CHECKSUM" \
+                --title "$RELEASE_TAG" \
+                --generate-notes
             fi
-
-            gh release create "$RELEASE_TAG" \
-              "$ARCHIVE" \
-              "$CHECKSUM" \
-              --title "$RELEASE_TAG" \
-              --generate-notes \
-              "${prerelease_flag[@]}"
           fi
 
       - name: Update Homebrew formula
