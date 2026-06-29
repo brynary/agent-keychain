@@ -167,7 +167,7 @@ extension AgentKeychainCLI {
                 resource: browserName,
                 reason: request.reason
             ))
-            try dependencies.browserLauncher.launchChrome(userDataDir: userDataDir)
+            try dependencies.browserLauncher.launchChrome(userDataDir: userDataDir, additionalArguments: [])
             try audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
                 runID: runID,

@@ -26,6 +26,7 @@ public struct BlackBoxAttachedImage: Codable, Equatable, Sendable {
 
 public struct BlackBoxBrowserLaunch: Codable, Equatable, Sendable {
     public var userDataDir: String
+    public var additionalArguments: [String]
 }
 
 public struct BlackBoxCommandInvocation: Codable, Equatable, Sendable {
@@ -275,9 +276,9 @@ private final class BlackBoxBrowserLauncher: BrowserLaunching {
         self.store = store
     }
 
-    func launchChrome(userDataDir: String) throws {
+    func launchChrome(userDataDir: String, additionalArguments: [String]) throws {
         try store.update { state in
-            state.browserLaunches.append(BlackBoxBrowserLaunch(userDataDir: userDataDir))
+            state.browserLaunches.append(BlackBoxBrowserLaunch(userDataDir: userDataDir, additionalArguments: additionalArguments))
         }
     }
 }

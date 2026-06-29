@@ -157,12 +157,13 @@ final class RecordingDiskImageStore: DiskImageManaging {
 final class RecordingBrowserLauncher: BrowserLaunching {
     struct Launch: Equatable {
         let userDataDir: String
+        let additionalArguments: [String]
     }
 
     var launches: [Launch] = []
 
-    func launchChrome(userDataDir: String) throws {
-        launches.append(Launch(userDataDir: userDataDir))
+    func launchChrome(userDataDir: String, additionalArguments: [String]) throws {
+        launches.append(Launch(userDataDir: userDataDir, additionalArguments: additionalArguments))
     }
 }
 
@@ -1054,7 +1055,7 @@ func testBrowserCreateOpenListAndRolePolicy() throws {
     try expectEqual(open.exitCode, 0, "browser open exit code")
     try expectEqual(disk.attached.count, 1, "browser should attach volume once")
     try expectEqual(browser.launches, [
-        RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury")
+        RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury", additionalArguments: [])
     ], "browser launches")
     try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "browser detach-on-exit")
 
@@ -1062,6 +1063,161 @@ func testBrowserCreateOpenListAndRolePolicy() throws {
     try expect(auditText.contains("\"event\":\"browser_created\""), "audit should include browser_created")
     try expect(auditText.contains("\"event\":\"browser_opened\""), "audit should include browser_opened")
     try expect(auditText.contains("\"event\":\"browser_exited\""), "audit should include browser_exited")
+}
+
+func testBrowserPathMountsVolumeAndPrintsProfilePath() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "browser path fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "browser path fixture browser")
+
+    let missingReason = cli.run([
+        "browser", "path", "Mercury",
+        "--role", "finance"
+    ], workingDirectory: temp.url)
+    try expectEqual(missingReason.exitCode, 2, "browser path missing reason exit code")
+    try expect(missingReason.stderr.contains("Role finance requires --reason"), "browser path missing reason message: \(missingReason.stderr)")
+
+    let crossRole = cli.run([
+        "browser", "path", "Mercury",
+        "--role", "regular"
+    ], workingDirectory: temp.url)
+    try expectEqual(crossRole.exitCode, 1, "browser path cross-role exit code")
+    try expect(crossRole.stderr.contains("Browser profile Mercury belongs to role finance, not regular."), "browser path cross-role message: \(crossRole.stderr)")
+
+    let path = cli.run([
+        "browser", "path", "Mercury",
+        "--role", "finance",
+        "--reason", "Resolve Mercury profile path for login"
+    ], workingDirectory: temp.url)
+    try expectEqual(path.exitCode, 0, "browser path exit code")
+    try expectEqual(path.stdout, "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury\n", "browser path stdout")
+    try expectEqual(disk.attached.count, 1, "browser path should attach volume")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(auditText.contains("\"event\":\"browser_path_resolved\""), "audit should include browser_path_resolved")
+    try expect(!auditText.contains("/ChromeProfiles/Mercury"), "audit should not contain resolved profile path")
+}
+
+func testBrowserOpenPassesGuardedChromeArguments() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "browser args fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "browser args fixture browser")
+
+    let open = cli.run([
+        "browser", "open", "Mercury",
+        "--role", "finance",
+        "--reason", "Open Mercury for approved automation",
+        "--",
+        "--headless=new",
+        "--remote-debugging-port=9222",
+        "about:blank"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(open.exitCode, 0, "browser args open exit code")
+    try expectEqual(browser.launches, [
+        RecordingBrowserLauncher.Launch(
+            userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury",
+            additionalArguments: [
+                "--headless=new",
+                "--remote-debugging-port=9222",
+                "about:blank",
+                "--remote-debugging-address=127.0.0.1"
+            ]
+        )
+    ], "browser args launch")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(!auditText.contains("--headless=new"), "audit should not contain raw Chrome args")
+    try expect(!auditText.contains("about:blank"), "audit should not contain raw Chrome URL args")
+}
+
+func testBrowserOpenRejectsUnsafeChromeArguments() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "RegularBrowser",
+        "--role", "regular",
+        "--size", "20g",
+        "--reason", "Create regular browser volume",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "unsafe args fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "GitHub",
+        "--role", "regular",
+        "--volume", "RegularBrowser",
+        "--reason", "Create GitHub browser profile"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "unsafe args fixture browser")
+
+    let userDataEquals = cli.run([
+        "browser", "open", "GitHub",
+        "--role", "regular",
+        "--",
+        "--user-data-dir=/tmp/not-managed"
+    ], workingDirectory: temp.url)
+    try expectEqual(userDataEquals.exitCode, 1, "user-data-dir equals exit code")
+    try expect(userDataEquals.stderr.contains("Refusing Chrome argument --user-data-dir because agent-keychain manages the browser profile path"), "user-data-dir equals message: \(userDataEquals.stderr)")
+
+    let profileSeparate = cli.run([
+        "browser", "open", "GitHub",
+        "--role", "regular",
+        "--",
+        "--profile-directory", "Default"
+    ], workingDirectory: temp.url)
+    try expectEqual(profileSeparate.exitCode, 1, "profile-directory separate exit code")
+    try expect(profileSeparate.stderr.contains("Refusing Chrome argument --profile-directory because agent-keychain manages the browser profile path"), "profile-directory separate message: \(profileSeparate.stderr)")
+
+    let nonLoopback = cli.run([
+        "browser", "open", "GitHub",
+        "--role", "regular",
+        "--",
+        "--remote-debugging-address=0.0.0.0",
+        "--remote-debugging-port", "9222"
+    ], workingDirectory: temp.url)
+    try expectEqual(nonLoopback.exitCode, 1, "non-loopback debugging exit code")
+    try expect(nonLoopback.stderr.contains("Refusing non-loopback Chrome remote debugging address: 0.0.0.0"), "non-loopback debugging message: \(nonLoopback.stderr)")
+
+    try expectEqual(browser.launches.count, 0, "unsafe args should not launch Chrome")
 }
 
 func testBrowserOpenRejectsProfilePathTraversal() throws {
@@ -1478,7 +1634,7 @@ func testRunBrowserLaunchesConfiguredBrowserAndDetaches() throws {
     ], workingDirectory: temp.url)
     try expectEqual(run.exitCode, 0, "run browser exit code")
     try expectEqual(browser.launches, [
-        RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury")
+        RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury", additionalArguments: [])
     ], "run browser launch")
     try expectEqual(runner.invocations.count, 1, "run browser command count")
     try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "run browser detach-on-exit")
@@ -1513,6 +1669,9 @@ let tests: [(String, () throws -> Void)] = [
     ("testVolumeUnlockRejectsExistingMountpointThatIsNotExpectedImage", testVolumeUnlockRejectsExistingMountpointThatIsNotExpectedImage),
     ("testVolumeUnlockRejectsSymlinkMountpoint", testVolumeUnlockRejectsSymlinkMountpoint),
     ("testBrowserCreateOpenListAndRolePolicy", testBrowserCreateOpenListAndRolePolicy),
+    ("testBrowserPathMountsVolumeAndPrintsProfilePath", testBrowserPathMountsVolumeAndPrintsProfilePath),
+    ("testBrowserOpenPassesGuardedChromeArguments", testBrowserOpenPassesGuardedChromeArguments),
+    ("testBrowserOpenRejectsUnsafeChromeArguments", testBrowserOpenRejectsUnsafeChromeArguments),
     ("testBrowserOpenRejectsProfilePathTraversal", testBrowserOpenRejectsProfilePathTraversal),
     ("testPrivilegedBrowserAndRunDefaultToDetachOnExit", testPrivilegedBrowserAndRunDefaultToDetachOnExit),
     ("testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage", testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage),

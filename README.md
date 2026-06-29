@@ -99,6 +99,20 @@ Open the isolated browser profile:
 agent-keychain browser open GitHub --role regular
 ```
 
+Print the managed Chrome profile path for another launcher:
+
+```sh
+agent-keychain browser path GitHub --role regular
+```
+
+Pass additional guarded Chrome arguments after `--`:
+
+```sh
+agent-keychain browser open GitHub --role regular -- \
+  --remote-debugging-port=9222 \
+  https://github.com
+```
+
 ## Project State
 
 Each project stores local state under `.agent-keychain/`:
@@ -171,7 +185,8 @@ Browser commands:
 
 ```sh
 agent-keychain browser create NAME --role ROLE --volume VOLUME --reason TEXT
-agent-keychain browser open NAME --role ROLE [--reason TEXT] [--detach-on-exit]
+agent-keychain browser open NAME --role ROLE [--reason TEXT] [--detach-on-exit] [-- CHROME_ARG...]
+agent-keychain browser path NAME --role ROLE [--reason TEXT]
 agent-keychain browser list [--role ROLE]
 agent-keychain browser delete NAME --role ROLE --reason TEXT
 ```
@@ -200,6 +215,7 @@ The short version:
 - Disk-image passwords never live in `config.json`.
 - Passwords are passed to `hdiutil` through standard input, not arguments.
 - Chrome launches with `--user-data-dir` inside a managed encrypted volume.
+- Chrome passthrough arguments cannot override the managed profile path, and remote debugging addresses are restricted to loopback.
 - The project audit log records policy decisions and sensitive operations.
 - Mounted volumes and injected environment variables are available to user-level processes.
 

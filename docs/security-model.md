@@ -99,6 +99,15 @@ Chrome is launched directly with:
 
 The user's normal Chrome profile is not used.
 
+`browser open` accepts additional Chrome arguments after `--`. The CLI rejects
+arguments that override the managed profile path, such as `--user-data-dir` and
+`--profile-directory`. If Chrome remote debugging is requested, the debugging
+address must be loopback (`127.0.0.1`, `localhost`, or `::1`).
+
+`browser path` resolves the managed Chrome profile path after normal role,
+reason, and volume-unlock checks. It prints the path for external launchers and
+leaves the backing volume mounted.
+
 Profile paths are validated before volume attach and browser launch. Absolute paths, `~`, empty components, `.`, and `..` are rejected.
 
 ## Audit Log
@@ -122,6 +131,8 @@ Once a volume is mounted, its contents are readable by processes running as the 
 Once a secret is printed or injected into a child process environment, that process can read it.
 
 Chrome and macOS may store some browser-related credentials outside the managed sparsebundle. This can include safe-storage material, passkeys, sync data, or keychain items.
+
+Remote debugging exposes browser control to local processes that can reach the selected loopback port.
 
 Do not treat encrypted browser profile storage as complete browser credential containment.
 

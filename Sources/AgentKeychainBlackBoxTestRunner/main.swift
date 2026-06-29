@@ -504,6 +504,15 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     let list = try runAgentKeychain(["browser", "list", "--role", "regular"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(list.stdout, "GitHub\n", "browser list")
 
+    let expectedUserData = mountpoint + "/ChromeProfiles/GitHub"
+    let path = try runAgentKeychain([
+        "browser", "path", "GitHub",
+        "--role", "regular"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(path.exitCode, 0, "browser path")
+    try expectEqual(path.stdout, expectedUserData + "\n", "browser path stdout")
+    try expect(FileManager.default.fileExists(atPath: expectedUserData), "browser path should create profile directory")
+
     let crossRole = try runAgentKeychain([
         "browser", "open", "GitHub",
         "--role", "finance",
@@ -515,13 +524,22 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     let open = try runAgentKeychain([
         "browser", "open", "GitHub",
         "--role", "regular",
-        "--detach-on-exit"
+        "--detach-on-exit",
+        "--",
+        "--headless=new",
+        "--remote-debugging-port=9222",
+        "about:blank"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(open.exitCode, 0, "browser open")
 
-    let expectedUserData = mountpoint + "/ChromeProfiles/GitHub"
     let state = try readState(stateURL)
     try expectEqual(state.browserLaunches.map(\.userDataDir), [expectedUserData], "browser launch profile")
+    try expectEqual(state.browserLaunches.map(\.additionalArguments), [[
+        "--headless=new",
+        "--remote-debugging-port=9222",
+        "about:blank",
+        "--remote-debugging-address=127.0.0.1"
+    ]], "browser launch arguments")
     try expect(state.detachedMountpoints.contains(mountpoint), "browser detach-on-exit should detach volume")
 
     let delete = try runAgentKeychain([
@@ -533,9 +551,12 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
 
     let audit = try readAudit(projectRoot: temp.url)
     try expectContains(audit, "\"event\":\"browser_created\"", "browser created audit")
+    try expectContains(audit, "\"event\":\"browser_path_resolved\"", "browser path audit")
     try expectContains(audit, "\"event\":\"browser_opened\"", "browser opened audit")
     try expectContains(audit, "\"event\":\"browser_exited\"", "browser exited audit")
     try expectContains(audit, "\"event\":\"browser_deleted\"", "browser deleted audit")
+    try expectNotContains(audit, "--headless=new", "audit should not contain raw Chrome args")
+    try expectNotContains(audit, "about:blank", "audit should not contain raw Chrome URL args")
 }
 
 func testRunCommandSecretInjectionAndManagedBrowser() throws {

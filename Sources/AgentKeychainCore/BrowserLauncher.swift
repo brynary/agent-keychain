@@ -1,19 +1,19 @@
 import Foundation
 
 public protocol BrowserLaunching: AnyObject {
-    func launchChrome(userDataDir: String) throws
+    func launchChrome(userDataDir: String, additionalArguments: [String]) throws
 }
 
 public final class ProcessBrowserLauncher: BrowserLaunching {
     public init() {}
 
-    public func launchChrome(userDataDir: String) throws {
+    public func launchChrome(userDataDir: String, additionalArguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
         process.arguments = [
             "--user-data-dir=\(userDataDir)",
             "--no-first-run"
-        ]
+        ] + additionalArguments
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
