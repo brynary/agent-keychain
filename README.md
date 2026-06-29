@@ -11,9 +11,9 @@ The tool is intentionally local-first. It does not provide remote secret managem
 ## Requirements
 
 - macOS 14 or newer
-- Swift Package Manager
 - Google Chrome for managed browser profile launches
 - Touch ID or another macOS user-presence method for sensitive production flows
+- Swift Package Manager for source builds, `--HEAD` installs, and development
 
 ## Install
 
@@ -21,10 +21,10 @@ Install from Homebrew:
 
 ```sh
 brew tap brynary/agent-keychain ssh://git@github.com/brynary/agent-keychain.git
-brew install --HEAD brynary/agent-keychain/agent-keychain
+brew install brynary/agent-keychain/agent-keychain
 ```
 
-Stable release tags update the Homebrew formula automatically after the GitHub Release workflow succeeds.
+Stable release tags update the Homebrew formula with prebuilt macOS release assets automatically after the GitHub Release workflow succeeds.
 
 Build from source:
 
