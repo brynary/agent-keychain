@@ -219,6 +219,8 @@ private final class BlackBoxKeychainStore: KeychainStoring {
         }
     }
 
+    func repairGenericPasswordAccess(service: String) throws {}
+
     func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
         try store.update { state in
             state.roleKeychainCreations.append(BlackBoxRoleKeychainCreation(path: path, password: password, ttlSeconds: ttlSeconds))
@@ -267,6 +269,8 @@ private final class BlackBoxKeychainStore: KeychainStoring {
     func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
         try deleteGenericPassword(service: service)
     }
+
+    func repairGenericPasswordAccess(service: String, roleKeychain: RoleKeychainConfig) throws {}
 }
 
 private final class BlackBoxSecretPrompt: SecretPrompting {

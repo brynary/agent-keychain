@@ -12,6 +12,14 @@ public enum ProjectKeychainUnlockPolicy {
     public static let useProvidedPassword = true
 }
 
+public enum CustomKeychainItemAccessPolicy {
+    public static let descriptor = "agent-keychain item"
+    public static let allowsAnyApplicationAfterUnlock = true
+    public static let genericPasswordItemClass = SecItemClass(rawValue: 0x67656e70)!
+    public static let accountItemAttribute: UInt32 = 0x61636374
+    public static let serviceItemAttribute: UInt32 = 0x73766365
+}
+
 public final class MacOSKeychainStore: KeychainStoring {
     private let account = "default"
     private let progressReporter: ProgressMessageReporting
@@ -79,6 +87,12 @@ public final class MacOSKeychainStore: KeychainStoring {
         }
     }
 
+    public func repairGenericPasswordAccess(service: String) throws {
+        try withUnlockedProjectKeychain { keychain in
+            try repairGenericPasswordAccess(service: service, keychain: keychain)
+        }
+    }
+
     public func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
         let absolutePath = try absoluteKeychainPath(path)
         guard !FileManager.default.fileExists(atPath: absolutePath) else {
@@ -132,6 +146,12 @@ public final class MacOSKeychainStore: KeychainStoring {
     public func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
         try withRoleKeychain(roleKeychain) { keychain in
             try deleteGenericPasswordIfPresent(service: service, keychain: keychain)
+        }
+    }
+
+    public func repairGenericPasswordAccess(service: String, roleKeychain: RoleKeychainConfig) throws {
+        try withRoleKeychain(roleKeychain) { keychain in
+            try repairGenericPasswordAccess(service: service, keychain: keychain)
         }
     }
 
@@ -333,26 +353,74 @@ public final class MacOSKeychainStore: KeychainStoring {
 
     private func addGenericPassword(service: String, value: String, keychain: SecKeychain) throws {
         let status = try withKeychainUserInteractionAllowed(false) {
-            service.withCString { servicePointer in
+            let access = try customKeychainItemAccess()
+
+            return service.withCString { servicePointer in
                 account.withCString { accountPointer in
                     value.withCString { valuePointer in
-                        SecKeychainAddGenericPassword(
-                            keychain,
-                            UInt32(strlen(servicePointer)),
-                            servicePointer,
-                            UInt32(strlen(accountPointer)),
-                            accountPointer,
-                            UInt32(strlen(valuePointer)),
-                            valuePointer,
-                            nil
-                        )
+                        var attributes = [
+                            SecKeychainAttribute(
+                                tag: CustomKeychainItemAccessPolicy.serviceItemAttribute,
+                                length: UInt32(strlen(servicePointer)),
+                                data: UnsafeMutableRawPointer(mutating: servicePointer)
+                            ),
+                            SecKeychainAttribute(
+                                tag: CustomKeychainItemAccessPolicy.accountItemAttribute,
+                                length: UInt32(strlen(accountPointer)),
+                                data: UnsafeMutableRawPointer(mutating: accountPointer)
+                            )
+                        ]
+                        return attributes.withUnsafeMutableBufferPointer { attributesBuffer in
+                            var attributeList = SecKeychainAttributeList(
+                                count: UInt32(attributesBuffer.count),
+                                attr: attributesBuffer.baseAddress
+                            )
+                            return SecKeychainItemCreateFromContent(
+                                CustomKeychainItemAccessPolicy.genericPasswordItemClass,
+                                &attributeList,
+                                UInt32(strlen(valuePointer)),
+                                valuePointer,
+                                keychain,
+                                access,
+                                nil
+                            )
+                        }
                     }
                 }
             }
         }
         guard status == errSecSuccess else {
-            throw AgentKeychainError.filesystem("Unable to store project keychain item: \(securityMessage(status))")
+            throw AgentKeychainError.filesystem("Unable to store keychain item: \(securityMessage(status))")
         }
+    }
+
+    private func customKeychainItemAccess() throws -> SecAccess {
+        var access: SecAccess?
+        // Avoid SecAccessCreate's nil-list default, which trusts the creating executable.
+        let emptyTrustedApplications = [] as CFArray
+        let createStatus = SecAccessCreate(
+            CustomKeychainItemAccessPolicy.descriptor as CFString,
+            emptyTrustedApplications,
+            &access
+        )
+        guard createStatus == errSecSuccess, let access else {
+            throw AgentKeychainError.filesystem("Unable to create keychain item access: \(securityMessage(createStatus))")
+        }
+
+        var acl: SecACL?
+        let aclStatus = SecACLCreateWithSimpleContents(
+            access,
+            nil,
+            CustomKeychainItemAccessPolicy.descriptor as CFString,
+            SecKeychainPromptSelector(),
+            &acl
+        )
+        _ = acl
+        guard aclStatus == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to configure keychain item access: \(securityMessage(aclStatus))")
+        }
+
+        return access
     }
 
     private func readGenericPassword(service: String, keychain: SecKeychain) throws -> String {
@@ -375,14 +443,14 @@ public final class MacOSKeychainStore: KeychainStoring {
             }
         }
         guard status == errSecSuccess, let data else {
-            throw AgentKeychainError.filesystem("Unable to read project keychain item: \(securityMessage(status))")
+            throw AgentKeychainError.filesystem("Unable to read keychain item: \(securityMessage(status))")
         }
         defer {
             SecKeychainItemFreeContent(nil, data)
         }
         let bytes = Data(bytes: data, count: Int(length))
         guard let value = String(data: bytes, encoding: .utf8) else {
-            throw AgentKeychainError.filesystem("Invalid project keychain item data")
+            throw AgentKeychainError.filesystem("Invalid keychain item data")
         }
         return value
     }
@@ -406,14 +474,74 @@ public final class MacOSKeychainStore: KeychainStoring {
             }
         }
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw AgentKeychainError.filesystem("Unable to find project keychain item for deletion: \(securityMessage(status))")
+            throw AgentKeychainError.filesystem("Unable to find keychain item for deletion: \(securityMessage(status))")
         }
         if let item {
             let deleteStatus = SecKeychainItemDelete(item)
             guard deleteStatus == errSecSuccess else {
-                throw AgentKeychainError.filesystem("Unable to delete project keychain item: \(securityMessage(deleteStatus))")
+                throw AgentKeychainError.filesystem("Unable to delete keychain item: \(securityMessage(deleteStatus))")
             }
         }
+    }
+
+    private func repairGenericPasswordAccess(service: String, keychain: SecKeychain) throws {
+        let item = try findGenericPasswordItem(service: service, keychain: keychain)
+        var access: SecAccess?
+        let accessStatus = SecKeychainItemCopyAccess(item, &access)
+        guard accessStatus == errSecSuccess, let access else {
+            throw AgentKeychainError.filesystem("Unable to read keychain item access: \(securityMessage(accessStatus))")
+        }
+
+        guard let aclList = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt) else {
+            throw AgentKeychainError.filesystem("Unable to read keychain item decrypt ACL")
+        }
+        guard CFArrayGetCount(aclList) > 0,
+              let acl = unsafeBitCast(CFArrayGetValueAtIndex(aclList, 0), to: SecACL?.self) else {
+            throw AgentKeychainError.filesystem("Unable to find keychain item decrypt ACL")
+        }
+
+        let status = try withKeychainUserInteractionAllowed(true) {
+            SecACLSetContents(
+                acl,
+                nil,
+                CustomKeychainItemAccessPolicy.descriptor as CFString,
+                SecKeychainPromptSelector()
+            )
+        }
+        guard status == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to repair keychain item access: \(securityMessage(status))")
+        }
+
+        let setStatus = try withKeychainUserInteractionAllowed(true) {
+            SecKeychainItemSetAccess(item, access)
+        }
+        guard setStatus == errSecSuccess else {
+            throw AgentKeychainError.filesystem("Unable to save repaired keychain item access: \(securityMessage(setStatus))")
+        }
+    }
+
+    private func findGenericPasswordItem(service: String, keychain: SecKeychain) throws -> SecKeychainItem {
+        var item: SecKeychainItem?
+        let status = try withKeychainUserInteractionAllowed(false) {
+            service.withCString { servicePointer in
+                account.withCString { accountPointer in
+                    SecKeychainFindGenericPassword(
+                        keychain,
+                        UInt32(strlen(servicePointer)),
+                        servicePointer,
+                        UInt32(strlen(accountPointer)),
+                        accountPointer,
+                        nil,
+                        nil,
+                        &item
+                    )
+                }
+            }
+        }
+        guard status == errSecSuccess, let item else {
+            throw AgentKeychainError.filesystem("Unable to find keychain item for access repair: \(securityMessage(status))")
+        }
+        return item
     }
 
     private func securityMessage(_ status: OSStatus) -> String {

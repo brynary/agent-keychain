@@ -60,10 +60,23 @@ final class RecordingKeychainStore: KeychainStoring {
         let password: String
     }
 
+    struct GenericPasswordWrite: Equatable {
+        let service: String
+        let value: String
+        let roleKeychainPath: String?
+    }
+
+    struct GenericPasswordAccessRepair: Equatable {
+        let service: String
+        let roleKeychainPath: String?
+    }
+
     var projectKeychainCreations: [ProjectKeychainCreation] = []
     var projectPasswords: [ProjectPassword] = []
     var roleKeychainCreations: [RoleKeychainCreation] = []
     var rolePasswords: [RolePassword] = []
+    var genericPasswordWrites: [GenericPasswordWrite] = []
+    var genericPasswordAccessRepairs: [GenericPasswordAccessRepair] = []
     var roleUnlocks: [String] = []
     var roleLocks: [String] = []
     var roleUnlockStatusChecks: [String] = []
@@ -83,6 +96,7 @@ final class RecordingKeychainStore: KeychainStoring {
     }
 
     func storeGenericPassword(service: String, value: String) throws {
+        genericPasswordWrites.append(GenericPasswordWrite(service: service, value: value, roleKeychainPath: nil))
         secrets[service] = value
     }
 
@@ -99,6 +113,10 @@ final class RecordingKeychainStore: KeychainStoring {
     func deleteGenericPassword(service: String) throws {
         deletedServices.append(service)
         secrets.removeValue(forKey: service)
+    }
+
+    func repairGenericPasswordAccess(service: String) throws {
+        genericPasswordAccessRepairs.append(GenericPasswordAccessRepair(service: service, roleKeychainPath: nil))
     }
 
     func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
@@ -125,6 +143,7 @@ final class RecordingKeychainStore: KeychainStoring {
     }
 
     func storeGenericPassword(service: String, value: String, roleKeychain: RoleKeychainConfig) throws {
+        genericPasswordWrites.append(GenericPasswordWrite(service: service, value: value, roleKeychainPath: roleKeychain.path))
         secrets[service] = value
     }
 
@@ -134,6 +153,10 @@ final class RecordingKeychainStore: KeychainStoring {
 
     func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
         try deleteGenericPassword(service: service)
+    }
+
+    func repairGenericPasswordAccess(service: String, roleKeychain: RoleKeychainConfig) throws {
+        genericPasswordAccessRepairs.append(GenericPasswordAccessRepair(service: service, roleKeychainPath: roleKeychain.path))
     }
 }
 
@@ -365,6 +388,13 @@ func testProjectKeychainUnlockPolicyUsesGeneratedPassword() throws {
     try expect(
         ProjectKeychainUnlockPolicy.useProvidedPassword,
         "project keychain unlock should use the generated password instead of prompting the user"
+    )
+}
+
+func testCustomKeychainItemAccessPolicyAllowsExecutableIndependentReads() throws {
+    try expect(
+        CustomKeychainItemAccessPolicy.allowsAnyApplicationAfterUnlock,
+        "project and role keychain items should not be tied to the executable path that created them"
     )
 }
 
@@ -851,6 +881,39 @@ func testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent() thro
     try expectEqual(second.exitCode, 0, "second migration exit code")
     try expectEqual(second.stdout, "Role keychains already migrated\n", "second migration stdout")
     try expectEqual(keychain.roleKeychainCreations.count, creationsBeforeMigration + 3, "second migration should not create role keychains")
+}
+
+func testConfigRepairKeychainAccessRewritesProjectAndRoleItems() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let prompt = QueueSecretPrompt(["ghp_regular_secret"])
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, prompt: prompt)
+
+    let set = cli.run([
+        "secret", "set", "github-readonly",
+        "--role", "regular",
+        "--reason", "Add GitHub token",
+    ], workingDirectory: temp.url)
+    try expectEqual(set.exitCode, 0, "repair fixture secret set")
+
+    keychain.genericPasswordWrites.removeAll()
+    keychain.genericPasswordAccessRepairs.removeAll()
+    let repair = cli.run([
+        "config", "repair-keychain-access",
+        "--reason", "Repair executable-bound keychain ACLs"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(repair.exitCode, 0, "repair keychain access exit code")
+    try expect(repair.stdout.contains("Repaired access for"), "repair stdout: \(repair.stdout)")
+    try expect(keychain.genericPasswordAccessRepairs.contains(RecordingKeychainStore.GenericPasswordAccessRepair(
+        service: "agent-keychain.role.regular.secret.github-readonly",
+        roleKeychainPath: ".agent-keychain/keychains/roles/regular.keychain-db"
+    )), "repair should rewrite regular secret in role keychain")
+    try expectEqual(keychain.genericPasswordWrites, [], "repair should not rewrite secret values")
+
+    let audit = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(audit.contains("\"event\":\"keychain_access_repaired\""), "repair audit")
+    try expect(!audit.contains("ghp_regular_secret"), "repair audit should not contain secret values")
 }
 
 func testUnfilteredDiscoveryOutputIncludesRoleContext() throws {
@@ -2066,6 +2129,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testCLITypeExists", testCLITypeExists),
     ("testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement", testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement),
     ("testProjectKeychainUnlockPolicyUsesGeneratedPassword", testProjectKeychainUnlockPolicyUsesGeneratedPassword),
+    ("testCustomKeychainItemAccessPolicyAllowsExecutableIndependentReads", testCustomKeychainItemAccessPolicyAllowsExecutableIndependentReads),
     ("testTopLevelHelpIsUsefulAndDoesNotRequireProject", testTopLevelHelpIsUsefulAndDoesNotRequireProject),
     ("testInitCreatesProjectLayoutConfigIntegrityAndAudit", testInitCreatesProjectLayoutConfigIntegrityAndAudit),
     ("testRoleCreateListShowAndReasonRequirement", testRoleCreateListShowAndReasonRequirement),
@@ -2078,6 +2142,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testSecretGetRequiresPromptWhenRoleSessionIsMissing", testSecretGetRequiresPromptWhenRoleSessionIsMissing),
     ("testSecretGetPromptsAgainAfterRoleUnlockTTLExpires", testSecretGetPromptsAgainAfterRoleUnlockTTLExpires),
     ("testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent", testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent),
+    ("testConfigRepairKeychainAccessRewritesProjectAndRoleItems", testConfigRepairKeychainAccessRewritesProjectAndRoleItems),
     ("testUnfilteredDiscoveryOutputIncludesRoleContext", testUnfilteredDiscoveryOutputIncludesRoleContext),
     ("testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput", testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput),
     ("testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle", testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle),

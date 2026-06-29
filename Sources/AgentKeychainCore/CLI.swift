@@ -276,7 +276,7 @@ public struct AgentKeychainCLI {
 
     private func config(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let subcommand = arguments.first else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain config <path|trust-current|migrate-role-keychains>")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain config <path|trust-current|migrate-role-keychains|repair-keychain-access>")
         }
         let store = ConfigStore(projectRoot: workingDirectory)
         switch subcommand {
@@ -303,6 +303,8 @@ public struct AgentKeychainCLI {
             return CommandResult(exitCode: 0, stdout: "Trusted current config\n")
         case "migrate-role-keychains":
             return try migrateRoleKeychains(arguments: Array(arguments.dropFirst()), store: store, workingDirectory: workingDirectory)
+        case "repair-keychain-access":
+            return try repairKeychainAccess(arguments: Array(arguments.dropFirst()), store: store, workingDirectory: workingDirectory)
         default:
             throw AgentKeychainError.invalidArguments("Unknown config command: \(subcommand)")
         }
@@ -381,5 +383,85 @@ public struct AgentKeychainCLI {
         ))
         try store.writeIntegrity(for: config, updatedAt: dependencies.clock.now())
         return CommandResult(exitCode: 0, stdout: "Migrated \(missingRoleKeychains.count) role keychain\(missingRoleKeychains.count == 1 ? "" : "s")\n")
+    }
+
+    private func repairKeychainAccess(arguments: [String], store: ConfigStore, workingDirectory: URL) throws -> CommandResult {
+        let options = try ParsedOptions(arguments: arguments)
+        let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
+        try dependencies.userPresenceAuthorizer.authorize(
+            reason: reason,
+            progressReporter: dependencies.progressReporter
+        )
+        let config = try loadTrustedConfig(store: store, reason: reason)
+        try configureKeychainContext(config: config, workingDirectory: workingDirectory)
+        let audit = AuditLog(url: store.auditURL)
+        let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
+        var repaired = 0
+
+        for (name, secret) in config.secrets.sorted(by: { $0.key < $1.key }) {
+            repaired += try repairKeychainItem(
+                service: secret.keychainService,
+                role: secret.role,
+                resource: name,
+                config: config,
+                store: store,
+                audit: audit,
+                runID: runID,
+                reason: reason
+            )
+        }
+
+        for (name, volume) in config.volumes.sorted(by: { $0.key < $1.key }) {
+            repaired += try repairKeychainItem(
+                service: volume.keychainService,
+                role: volume.role,
+                resource: name,
+                config: config,
+                store: store,
+                audit: audit,
+                runID: runID,
+                reason: reason
+            )
+        }
+
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: runID,
+            project: config.project.name,
+            event: "keychain_access_repaired",
+            result: "success",
+            reason: reason,
+            message: "Repaired access for \(repaired) keychain item\(repaired == 1 ? "" : "s")"
+        ))
+        return CommandResult(exitCode: 0, stdout: "Repaired access for \(repaired) keychain item\(repaired == 1 ? "" : "s")\n")
+    }
+
+    private func repairKeychainItem(
+        service: String,
+        role: String,
+        resource: String,
+        config: ProjectConfig,
+        store: ConfigStore,
+        audit: AuditLog,
+        runID: String,
+        reason: String
+    ) throws -> Int {
+        let roleConfig = try PolicyEngine.requireRole(config, role)
+        guard roleConfig.keychain != nil else {
+            try dependencies.keychainStore.repairGenericPasswordAccess(service: service)
+            return 1
+        }
+
+        let roleKeychain = try ensureRoleKeychainUnlocked(
+            config: config,
+            store: store,
+            audit: audit,
+            runID: runID,
+            roleName: role,
+            resource: resource,
+            reason: reason
+        )
+        try dependencies.keychainStore.repairGenericPasswordAccess(service: service, roleKeychain: roleKeychain)
+        return 1
     }
 }
