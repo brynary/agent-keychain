@@ -25,10 +25,11 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Show Swift version
         run: swift --version
@@ -78,6 +79,8 @@ jobs:
 
       - name: Publish GitHub Release
         env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -85,8 +88,8 @@ jobs:
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \
-              "${{ steps.package.outputs.archive }}" \
-              "${{ steps.package.outputs.checksum }}" \
+              "$ARCHIVE" \
+              "$CHECKSUM" \
               --clobber
           else
             prerelease_flag=()
@@ -95,14 +98,16 @@ jobs:
             fi
 
             gh release create "$RELEASE_TAG" \
-              "${{ steps.package.outputs.archive }}" \
-              "${{ steps.package.outputs.checksum }}" \
+              "$ARCHIVE" \
+              "$CHECKSUM" \
               --title "$RELEASE_TAG" \
               --generate-notes \
               "${prerelease_flag[@]}"
           fi
 
       - name: Update Homebrew formula
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -114,6 +119,7 @@ jobs:
 
           release_revision="$(git rev-list -n 1 "$RELEASE_TAG")"
 
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch origin main
           git checkout -B main origin/main
 
