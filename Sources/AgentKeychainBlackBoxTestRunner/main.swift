@@ -521,7 +521,7 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     try expectEqual(crossRole.exitCode, 1, "cross-role browser")
     try expectContains(crossRole.stderr, "Browser profile GitHub belongs to role regular, not finance", "cross-role browser stderr")
 
-    let open = try runAgentKeychain([
+    let oldDetachFlag = try runAgentKeychain([
         "browser", "open", "GitHub",
         "--role", "regular",
         "--detach-on-exit",
@@ -530,17 +530,38 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
         "--remote-debugging-port=9222",
         "about:blank"
     ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(oldDetachFlag.exitCode, 2, "browser open detach-on-exit exit code")
+    try expectContains(oldDetachFlag.stderr, "browser open no longer accepts --detach-on-exit", "browser open detach-on-exit stderr")
+
+    let headed = try runAgentKeychain([
+        "browser", "open", "GitHub",
+        "--role", "regular",
+        "--",
+        "https://github.com"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(headed.exitCode, 0, "browser headed open")
+
+    let open = try runAgentKeychain([
+        "browser", "open", "GitHub",
+        "--role", "regular",
+        "--",
+        "--headless=new",
+        "--remote-debugging-port=9222",
+        "about:blank"
+    ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(open.exitCode, 0, "browser open")
 
     let state = try readState(stateURL)
-    try expectEqual(state.browserLaunches.map(\.userDataDir), [expectedUserData], "browser launch profile")
+    try expectEqual(state.browserLaunches.map(\.userDataDir), [expectedUserData, expectedUserData], "browser launch profile")
     try expectEqual(state.browserLaunches.map(\.additionalArguments), [[
+        "https://github.com"
+    ], [
         "--headless=new",
         "--remote-debugging-port=9222",
         "about:blank",
         "--remote-debugging-address=127.0.0.1"
     ]], "browser launch arguments")
-    try expect(state.detachedMountpoints.contains(mountpoint), "browser detach-on-exit should detach volume")
+    try expect(!state.detachedMountpoints.contains(mountpoint), "browser open should leave volume mounted")
 
     let delete = try runAgentKeychain([
         "browser", "delete", "GitHub",
@@ -553,7 +574,7 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     try expectContains(audit, "\"event\":\"browser_created\"", "browser created audit")
     try expectContains(audit, "\"event\":\"browser_path_resolved\"", "browser path audit")
     try expectContains(audit, "\"event\":\"browser_opened\"", "browser opened audit")
-    try expectContains(audit, "\"event\":\"browser_exited\"", "browser exited audit")
+    try expectNotContains(audit, "\"event\":\"browser_exited\"", "browser open should not audit unobserved exit")
     try expectContains(audit, "\"event\":\"browser_deleted\"", "browser deleted audit")
     try expectNotContains(audit, "--headless=new", "audit should not contain raw Chrome args")
     try expectNotContains(audit, "about:blank", "audit should not contain raw Chrome URL args")
@@ -642,7 +663,7 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
     state = try readState(stateURL)
     try expectEqual(state.browserLaunches.last?.userDataDir, mountpoint + "/ChromeProfiles/Mercury", "run browser launch")
     try expectEqual(state.commandInvocations.last?.command, ["agent-command"], "run browser child command")
-    try expect(state.detachedMountpoints.contains(mountpoint), "run detach-on-exit should detach browser volume")
+    try expect(!state.detachedMountpoints.contains(mountpoint), "run detach-on-exit should leave browser volume mounted")
 
     let audit = try readAudit(projectRoot: temp.url)
     try expectContains(audit, "\"event\":\"privileged_secret_export_override\"", "privileged secret export audit")

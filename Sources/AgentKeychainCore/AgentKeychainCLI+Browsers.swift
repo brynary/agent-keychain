@@ -66,10 +66,13 @@ extension AgentKeychainCLI {
 
     private func browserOpen(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser open NAME --role ROLE [--reason TEXT] [--detach-on-exit] [-- CHROME_ARG...]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser open NAME --role ROLE [--reason TEXT] [-- CHROME_ARG...]")
         }
         let (optionArguments, rawChromeArguments) = splitPassthroughArguments(Array(arguments.dropFirst()))
-        let options = try ParsedOptions(arguments: optionArguments, booleanFlags: ["--detach-on-exit"])
+        if optionArguments.contains("--detach-on-exit") {
+            throw AgentKeychainError.invalidArguments("browser open no longer accepts --detach-on-exit. Close Chrome, then run `agent-keychain volume lock NAME --role ROLE`.")
+        }
+        let options = try ParsedOptions(arguments: optionArguments)
         let chromeArguments = try validatedChromeArguments(rawChromeArguments)
         guard let roleName = options.value(for: "--role") else {
             throw AgentKeychainError.invalidArguments("browser open requires --role")
@@ -93,10 +96,6 @@ extension AgentKeychainCLI {
         try ensureBrowserProfileDirectory(resolved)
         try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: resolved.config.project.name, event: "browser_opened", result: "success", role: roleName, resource: name, reason: reason))
         try dependencies.browserLauncher.launchChrome(userDataDir: resolved.userDataDir, additionalArguments: chromeArguments)
-        try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: resolved.config.project.name, event: "browser_exited", result: "success", role: roleName, resource: name, reason: reason))
-        if options.hasFlag("--detach-on-exit") || defaultsToDetachOnExit(resolved.role) {
-            try detachVolumeIfNotBusy(project: resolved.config.project.name, runID: runID, role: roleName, volumeName: resolved.browser.volume, metadata: resolved.volume, reason: reason, auditURL: store.auditURL)
-        }
         return CommandResult(exitCode: 0, stdout: "Opened browser \(name)\n")
     }
 

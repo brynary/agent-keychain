@@ -904,8 +904,7 @@ func testBrowserOpenUsesManagedVolumeLockFile() throws {
     let blocked = cli.run([
         "browser", "open", "Mercury",
         "--role", "finance",
-        "--reason", "Review payment status for approved invoices",
-        "--detach-on-exit"
+        "--reason", "Review payment status for approved invoices"
     ], workingDirectory: temp.url)
     try expectEqual(blocked.exitCode, 1, "held lock browser exit code")
     try expect(blocked.stderr.contains("Managed volume FinanceBrowser is already in use"), "held lock message: \(blocked.stderr)")
@@ -915,8 +914,7 @@ func testBrowserOpenUsesManagedVolumeLockFile() throws {
     let opened = cli.run([
         "browser", "open", "Mercury",
         "--role", "finance",
-        "--reason", "Review payment status for approved invoices",
-        "--detach-on-exit"
+        "--reason", "Review payment status for approved invoices"
     ], workingDirectory: temp.url)
     try expectEqual(opened.exitCode, 0, "unheld lock browser exit code")
     try expect(!FileManager.default.fileExists(atPath: lockURL.path), "managed lock file should be released after browser exits")
@@ -1069,23 +1067,32 @@ func testBrowserCreateOpenListAndRolePolicy() throws {
     try expectEqual(missingReason.exitCode, 2, "browser missing reason exit code")
     try expect(missingReason.stderr.contains("Role finance requires --reason"), "browser missing reason message: \(missingReason.stderr)")
 
-    let open = cli.run([
+    let oldDetachFlag = cli.run([
         "browser", "open", "Mercury",
         "--role", "finance",
         "--reason", "Review payment status for approved invoices",
         "--detach-on-exit"
+    ], workingDirectory: temp.url)
+    try expectEqual(oldDetachFlag.exitCode, 2, "browser open detach-on-exit exit code")
+    try expect(oldDetachFlag.stderr.contains("browser open no longer accepts --detach-on-exit"), "browser open detach-on-exit message: \(oldDetachFlag.stderr)")
+    try expectEqual(browser.launches.count, 0, "browser detach-on-exit rejection should not launch")
+
+    let open = cli.run([
+        "browser", "open", "Mercury",
+        "--role", "finance",
+        "--reason", "Review payment status for approved invoices"
     ], workingDirectory: temp.url)
     try expectEqual(open.exitCode, 0, "browser open exit code")
     try expectEqual(disk.attached.count, 1, "browser should attach volume once")
     try expectEqual(browser.launches, [
         RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury", additionalArguments: [])
     ], "browser launches")
-    try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "browser detach-on-exit")
+    try expectEqual(disk.detached, [], "browser open should leave browser volume mounted")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
     try expect(auditText.contains("\"event\":\"browser_created\""), "audit should include browser_created")
     try expect(auditText.contains("\"event\":\"browser_opened\""), "audit should include browser_opened")
-    try expect(auditText.contains("\"event\":\"browser_exited\""), "audit should include browser_exited")
+    try expect(!auditText.contains("\"event\":\"browser_exited\""), "browser open should not audit an unobserved browser exit")
 }
 
 func testBrowserPathMountsVolumeAndPrintsProfilePath() throws {
@@ -1161,6 +1168,24 @@ func testBrowserOpenPassesGuardedChromeArguments() throws {
     ], workingDirectory: temp.url)
     try expectEqual(createBrowser.exitCode, 0, "browser args fixture browser")
 
+    let headed = cli.run([
+        "browser", "open", "Mercury",
+        "--role", "finance",
+        "--reason", "Open Mercury headed for passkey login",
+        "--",
+        "https://app.mercury.com"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(headed.exitCode, 0, "browser headed open exit code")
+    try expectEqual(browser.launches, [
+        RecordingBrowserLauncher.Launch(
+            userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury",
+            additionalArguments: [
+                "https://app.mercury.com"
+            ]
+        )
+    ], "browser headed launch")
+
     let open = cli.run([
         "browser", "open", "Mercury",
         "--role", "finance",
@@ -1173,6 +1198,12 @@ func testBrowserOpenPassesGuardedChromeArguments() throws {
 
     try expectEqual(open.exitCode, 0, "browser args open exit code")
     try expectEqual(browser.launches, [
+        RecordingBrowserLauncher.Launch(
+            userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury",
+            additionalArguments: [
+                "https://app.mercury.com"
+            ]
+        ),
         RecordingBrowserLauncher.Launch(
             userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury",
             additionalArguments: [
@@ -1287,7 +1318,7 @@ func testBrowserOpenRejectsProfilePathTraversal() throws {
     try expectEqual(browser.launches.count, 0, "unsafe profile path should not launch Chrome")
 }
 
-func testPrivilegedBrowserAndRunDefaultToDetachOnExit() throws {
+func testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let disk = RecordingDiskImageStore()
@@ -1316,8 +1347,8 @@ func testPrivilegedBrowserAndRunDefaultToDetachOnExit() throws {
         "--role", "finance",
         "--reason", "Review payment status for approved invoices"
     ], workingDirectory: temp.url)
-    try expectEqual(open.exitCode, 0, "privileged browser default detach exit code")
-    try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "privileged browser should detach without explicit flag")
+    try expectEqual(open.exitCode, 0, "privileged browser open exit code")
+    try expectEqual(disk.detached, [], "browser open should leave privileged browser volume mounted")
 
     disk.detached.removeAll()
     disk.mounted.removeAll()
@@ -1328,8 +1359,8 @@ func testPrivilegedBrowserAndRunDefaultToDetachOnExit() throws {
         "--browser", "Mercury",
         "--", "agent-command"
     ], workingDirectory: temp.url)
-    try expectEqual(run.exitCode, 0, "privileged run default detach exit code")
-    try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "privileged run should detach without explicit flag")
+    try expectEqual(run.exitCode, 0, "privileged run exit code")
+    try expectEqual(disk.detached, [], "run should leave browser-backed volume mounted")
 }
 
 func testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage() throws {
@@ -1623,7 +1654,7 @@ func testPolicyMutationsAndRawOverridesRequireUserPresence() throws {
     try expect(authorizer.reasons.contains("Review approved contractor invoices"), "raw secret override should require user presence")
 }
 
-func testRunBrowserLaunchesConfiguredBrowserAndDetaches() throws {
+func testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let disk = RecordingDiskImageStore()
@@ -1660,7 +1691,7 @@ func testRunBrowserLaunchesConfiguredBrowserAndDetaches() throws {
         RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury", additionalArguments: [])
     ], "run browser launch")
     try expectEqual(runner.invocations.count, 1, "run browser command count")
-    try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "run browser detach-on-exit")
+    try expectEqual(disk.detached, [], "run should leave launched browser volume mounted")
 }
 
 func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
@@ -1698,7 +1729,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testBrowserOpenPassesGuardedChromeArguments", testBrowserOpenPassesGuardedChromeArguments),
     ("testBrowserOpenRejectsUnsafeChromeArguments", testBrowserOpenRejectsUnsafeChromeArguments),
     ("testBrowserOpenRejectsProfilePathTraversal", testBrowserOpenRejectsProfilePathTraversal),
-    ("testPrivilegedBrowserAndRunDefaultToDetachOnExit", testPrivilegedBrowserAndRunDefaultToDetachOnExit),
+    ("testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted", testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted),
     ("testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage", testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage),
     ("testStatusConfigPathProjectDiscoveryAndTrustCurrent", testStatusConfigPathProjectDiscoveryAndTrustCurrent),
     ("testStatusReportsVolumeMountedState", testStatusReportsVolumeMountedState),
@@ -1706,7 +1737,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testRunInjectsAllowedSecretAndAuditsCommand", testRunInjectsAllowedSecretAndAuditsCommand),
     ("testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride", testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride),
     ("testPolicyMutationsAndRawOverridesRequireUserPresence", testPolicyMutationsAndRawOverridesRequireUserPresence),
-    ("testRunBrowserLaunchesConfiguredBrowserAndDetaches", testRunBrowserLaunchesConfiguredBrowserAndDetaches)
+    ("testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted", testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted)
 ]
 
 var failures = 0

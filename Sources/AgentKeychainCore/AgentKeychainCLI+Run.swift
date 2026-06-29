@@ -88,6 +88,7 @@ extension AgentKeychainCLI {
         }
 
         var mountedForRun: [VolumeMetadata] = []
+        var browserVolumeMountpoints = Set<String>()
         var managedLocks: [String: ManagedVolumeLock] = [:]
         defer {
             for lock in managedLocks.values {
@@ -134,6 +135,7 @@ extension AgentKeychainCLI {
                 throw AgentKeychainError.policy("Browser profile \(browserName) belongs to role \(browser.role), not \(request.role).")
             }
             let volume = try requireVolume(config: config, name: browser.volume, roleName: request.role, reason: request.reason, auditURL: store.auditURL)
+            browserVolumeMountpoints.insert(volume.mountpoint)
             if managedLocks[browser.volume] == nil {
                 managedLocks[browser.volume] = try ManagedVolumeLock.acquire(projectRoot: workingDirectory, volumeName: browser.volume)
             }
@@ -168,16 +170,6 @@ extension AgentKeychainCLI {
                 reason: request.reason
             ))
             try dependencies.browserLauncher.launchChrome(userDataDir: userDataDir, additionalArguments: [])
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "browser_exited",
-                result: "success",
-                role: request.role,
-                resource: browserName,
-                reason: request.reason
-            ))
         }
 
         try audit.append(AuditEvent(
@@ -202,6 +194,9 @@ extension AgentKeychainCLI {
 
         if request.detachOnExit || defaultsToDetachOnExit(role) {
             for volume in mountedForRun {
+                if browserVolumeMountpoints.contains(volume.mountpoint) {
+                    continue
+                }
                 let volumeName = config.volumes.first { $0.value.mountpoint == volume.mountpoint }?.key ?? volume.mountpoint
                 try detachVolumeIfNotBusy(project: config.project.name, runID: runID, role: request.role, volumeName: volumeName, metadata: volume, reason: request.reason, auditURL: store.auditURL)
             }

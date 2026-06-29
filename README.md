@@ -99,6 +99,27 @@ Open the isolated browser profile:
 agent-keychain browser open GitHub --role regular
 ```
 
+Open a headed browser for an interactive login:
+
+```sh
+agent-keychain browser open GitHub --role regular -- https://github.com
+```
+
+Open a headless browser for local CDP automation:
+
+```sh
+agent-keychain browser open GitHub --role regular -- \
+  --headless=new \
+  --remote-debugging-port=9222 \
+  about:blank
+```
+
+After closing Chrome, lock the backing volume:
+
+```sh
+agent-keychain volume lock RegularBrowser --role regular
+```
+
 Print the managed Chrome profile path for another launcher:
 
 ```sh
@@ -185,7 +206,7 @@ Browser commands:
 
 ```sh
 agent-keychain browser create NAME --role ROLE --volume VOLUME --reason TEXT
-agent-keychain browser open NAME --role ROLE [--reason TEXT] [--detach-on-exit] [-- CHROME_ARG...]
+agent-keychain browser open NAME --role ROLE [--reason TEXT] [-- CHROME_ARG...]
 agent-keychain browser path NAME --role ROLE [--reason TEXT]
 agent-keychain browser list [--role ROLE]
 agent-keychain browser delete NAME --role ROLE --reason TEXT
@@ -204,6 +225,9 @@ agent-keychain run \
   [--detach-on-exit] \
   -- COMMAND [ARGS...]
 ```
+
+`run --detach-on-exit` does not lock volumes that back launched browser profiles.
+Close Chrome first, then lock those volumes explicitly with `agent-keychain volume lock`.
 
 ## Security Model
 

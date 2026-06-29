@@ -92,12 +92,16 @@ Existing mountpoints fail closed unless they are already the expected mounted im
 
 Managed Chrome profiles live inside mounted encrypted volumes.
 
-Chrome is launched directly with:
+Chrome is launched through macOS `open` with:
 
 ```text
 --user-data-dir=<mounted-volume>/<profile-path>
 --no-first-run
 ```
+
+`browser open` returns after macOS accepts the Chrome launch request. It leaves
+the backing volume mounted; close Chrome before locking the volume with
+`agent-keychain volume lock`.
 
 The user's normal Chrome profile is not used.
 
@@ -144,7 +148,7 @@ For high-risk roles, prefer:
 - Browser sync disabled.
 - Browser password storage disabled.
 - Passkey use avoided where practical.
-- Short supervised sessions with `--detach-on-exit`.
+- Short supervised sessions followed by explicit volume locking.
 
 ## Non-Goals
 
