@@ -24,6 +24,8 @@ brew tap brynary/agent-keychain ssh://git@github.com/brynary/agent-keychain.git
 brew install --HEAD brynary/agent-keychain/agent-keychain
 ```
 
+Stable release tags update the Homebrew formula automatically after the GitHub Release workflow succeeds.
+
 Build from source:
 
 ```sh
