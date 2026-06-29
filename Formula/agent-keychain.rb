@@ -11,7 +11,7 @@ class AgentKeychain < Formula
     sha256 "994e4c42d39045cb6c2082e008d4a4456532b969c3e08ec5288f6e110a25e2cd"
   end
 
-  license :cannot_represent
+  license "MIT"
   head "ssh://git@github.com/brynary/agent-keychain.git", branch: "main"
 
   depends_on macos: :sonoma

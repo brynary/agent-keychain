@@ -17,7 +17,7 @@ class UpdateHomebrewFormulaTest < Minitest::Test
       url "ssh://git@github.com/brynary/agent-keychain.git",
           tag:      "v0.3.0",
           revision: "5d35722da61300ad020223cff33ca6ade92cf48e"
-      license :cannot_represent
+      license "MIT"
       head "ssh://git@github.com/brynary/agent-keychain.git", branch: "main"
 
       depends_on macos: :sonoma

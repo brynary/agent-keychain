@@ -261,4 +261,4 @@ GitHub Actions runs the same build and test layers on `main` and pull requests.
 
 ## License
 
-No license has been added yet.
+MIT. See [LICENSE](LICENSE).
