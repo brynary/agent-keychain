@@ -17,6 +17,13 @@ The tool is intentionally local-first. It does not provide remote secret managem
 
 ## Install
 
+Install from Homebrew:
+
+```sh
+brew tap brynary/agent-keychain ssh://git@github.com/brynary/agent-keychain.git
+brew install --HEAD brynary/agent-keychain/agent-keychain
+```
+
 Build from source:
 
 ```sh
