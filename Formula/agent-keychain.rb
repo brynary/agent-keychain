@@ -1,14 +1,14 @@
 class AgentKeychain < Formula
   desc "Project-scoped credential and browser-session isolation for local AI agents"
   homepage "https://github.com/brynary/agent-keychain"
-  version "0.5.1"
+  version "0.6.0"
 
   if Hardware::CPU.arm?
-    url "https://github.com/brynary/agent-keychain/releases/download/v0.5.1/agent-keychain-0.5.1-macos-arm64.tar.gz"
-    sha256 "e5edba89f255d1831ec1344d9c5ff2db2f8ffc42cbc6a5de60aaf87b4b783976"
+    url "https://github.com/brynary/agent-keychain/releases/download/v0.6.0/agent-keychain-0.6.0-macos-arm64.tar.gz"
+    sha256 "aefd4eeb7978c58a0fa59077b93259ad341c6422cd218b50bf4690f90660eda0"
   else
-    url "https://github.com/brynary/agent-keychain/releases/download/v0.5.1/agent-keychain-0.5.1-macos-x86_64.tar.gz"
-    sha256 "70dfd8b17e331917d703f693ce038480da5893bbfc828ab22cdabfbb774b3a3e"
+    url "https://github.com/brynary/agent-keychain/releases/download/v0.6.0/agent-keychain-0.6.0-macos-x86_64.tar.gz"
+    sha256 "0802f78be8f7fcd67d0c764abea7fdb5c1c5cf44674e1c7c22a794c804290193"
   end
 
   license "MIT"
