@@ -222,11 +222,12 @@ extension AgentKeychainCLI {
         )
         if mode == .headless {
             let version = try waitForCDPVersion(port: cdpPort)
-            guard let version else {
+            guard version != nil else {
                 throw AgentKeychainError.policy("Headless Chrome did not become available on 127.0.0.1:\(cdpPort).")
             }
-            guard version.browser.contains("HeadlessChrome") else {
-                throw AgentKeychainError.policy("CDP /json/version did not report HeadlessChrome on 127.0.0.1:\(cdpPort).")
+            let status = try dependencies.browserLauncher.managedChromeStatus(userDataDir: resolved.userDataDir)
+            guard status.headless == true else {
+                throw AgentKeychainError.policy("Managed Chrome process did not report headless mode for browser \(name).")
             }
         }
         try audit.append(AuditEvent(

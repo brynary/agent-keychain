@@ -1552,7 +1552,7 @@ func testBrowserHeadlessStartsManagedSessionAndVerifiesHeadlessCDP() throws {
     try expectEqual(createBrowser.exitCode, 0, "headless fixture browser")
 
     browser.cdpVersions[9222] = (
-        browser: "HeadlessChrome/126.0.0.0",
+        browser: "Chrome/126.0.0.0",
         webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
     )
 
@@ -1608,19 +1608,14 @@ func testBrowserHeadlessFailsWhenCDPIsUnavailableOrNotHeadless() throws {
     ], workingDirectory: temp.url)
     try expectEqual(createBrowser.exitCode, 0, "headless failure fixture browser")
 
-    browser.cdpVersions[9222] = (
-        browser: "Chrome/126.0.0.0",
-        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
-    )
-
-    let notHeadless = cli.run([
+    let unavailable = cli.run([
         "browser", "headless", "Mercury",
         "--url", "about:blank",
         "--cdp-port", "9222"
     ], workingDirectory: temp.url)
 
-    try expectEqual(notHeadless.exitCode, 1, "not-headless CDP exit code")
-    try expect(notHeadless.stderr.contains("CDP /json/version did not report HeadlessChrome"), "not-headless CDP message: \(notHeadless.stderr)")
+    try expectEqual(unavailable.exitCode, 1, "unavailable CDP exit code")
+    try expect(unavailable.stderr.contains("Headless Chrome did not become available on 127.0.0.1:9222"), "unavailable CDP message: \(unavailable.stderr)")
 }
 
 func testBrowserStopStopsExactProfileAndCanLockVolume() throws {

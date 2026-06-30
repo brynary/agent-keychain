@@ -138,13 +138,15 @@ public final class ProcessBrowserLauncher: BrowserLaunching {
         process.standardOutput = output
         process.standardError = error
         try process.run()
+        let outputData = output.fileHandleForReading.readDataToEndOfFile()
+        let errorData = error.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            let message = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "ps failed"
+            let message = String(data: errorData, encoding: .utf8) ?? "ps failed"
             throw AgentKeychainError.filesystem(message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
-        let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let text = String(data: outputData, encoding: .utf8) ?? ""
         return text.split(separator: "\n").compactMap { line in
             chromeProcess(from: String(line), userDataDir: userDataDir)
         }
