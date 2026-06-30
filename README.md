@@ -93,31 +93,47 @@ agent-keychain browser create GitHub \
   --reason "Create GitHub browser profile for regular work"
 ```
 
-Open the isolated browser profile:
+Open the isolated browser profile with the low-level passthrough command:
 
 ```sh
 agent-keychain browser open GitHub
 ```
 
-Open a headed browser for an interactive login:
+Use the managed headed-to-headless workflow when a human needs to authenticate first and an agent then needs the same encrypted Chrome profile through local CDP:
 
 ```sh
-agent-keychain browser open GitHub -- https://github.com
+agent-keychain browser headed GitHub \
+  --url https://github.com \
+  --cdp-port 9222 \
+  --reason "Authenticate GitHub in the managed browser profile"
 ```
 
-Open a headless browser for local CDP automation:
+After login, stop the visible browser:
 
 ```sh
-agent-keychain browser open GitHub -- \
-  --headless=new \
-  --remote-debugging-port=9222 \
-  about:blank
+agent-keychain browser stop GitHub
 ```
 
-After closing Chrome, lock the backing volume:
+Start the same profile headlessly for local automation:
 
 ```sh
-agent-keychain volume lock RegularBrowser
+agent-keychain browser headless GitHub \
+  --url about:blank \
+  --cdp-port 9222 \
+  --reason "Reuse authenticated GitHub profile for approved automation"
+```
+
+Inspect CDP attach details or human-readable session status:
+
+```sh
+agent-keychain browser cdp GitHub
+agent-keychain browser session GitHub
+```
+
+Stop Chrome and lock the backing volume:
+
+```sh
+agent-keychain browser stop GitHub --lock-volume
 ```
 
 Print the managed Chrome profile path for another launcher:
@@ -211,6 +227,11 @@ Browser commands:
 ```sh
 agent-keychain browser create NAME --role ROLE --volume VOLUME --reason TEXT
 agent-keychain browser open NAME [--reason TEXT] [-- CHROME_ARG...]
+agent-keychain browser headed NAME --url URL --cdp-port PORT [--reason TEXT]
+agent-keychain browser headless NAME --url URL --cdp-port PORT [--reason TEXT]
+agent-keychain browser stop NAME [--lock-volume]
+agent-keychain browser cdp NAME
+agent-keychain browser session NAME
 agent-keychain browser path NAME [--reason TEXT]
 agent-keychain browser list [--role ROLE]
 agent-keychain browser delete NAME --role ROLE --reason TEXT
@@ -228,7 +249,7 @@ agent-keychain run \
 ```
 
 `run` injects one or more same-role secrets into the child process environment.
-Use `volume unlock`, `volume lock`, and `browser open` explicitly for encrypted volume and browser workflows.
+Use `volume unlock`, `volume lock`, `browser open`, and the managed browser lifecycle commands explicitly for encrypted volume and browser workflows.
 
 ## Security Model
 
@@ -243,6 +264,7 @@ The short version:
 - Passwords are passed to `hdiutil` through standard input, not arguments.
 - Chrome launches with `--user-data-dir` inside a managed encrypted volume.
 - Chrome passthrough arguments cannot override the managed profile path, and remote debugging addresses are restricted to loopback.
+- Managed headed/headless browser commands keep browser auth state in the encrypted Chrome profile and do not export cookies, storage state, tokens, page text, or site data.
 - The project audit log records policy decisions and sensitive operations.
 - Mounted volumes and injected environment variables are available to user-level processes.
 

@@ -46,6 +46,13 @@ func expectNotContains(_ text: String, _ unexpected: String, _ message: String) 
     try expect(!text.contains(unexpected), "\(message): should not contain \(unexpected)")
 }
 
+func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
+    guard let value else {
+        throw TestFailure(description: message)
+    }
+    return value
+}
+
 func occurrenceCount(in text: String, of needle: String) -> Int {
     text.components(separatedBy: needle).count - 1
 }
@@ -580,8 +587,69 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(open.exitCode, 0, "browser open")
 
-    let state = try readState(stateURL)
-    try expectEqual(state.browserLaunches.map(\.userDataDir), [expectedUserData, expectedUserData], "browser launch profile")
+    var state = try readState(stateURL)
+    state.cdpVersions["9222"] = BlackBoxCDPVersion(
+        browser: "HeadlessChrome/126.0.0.0",
+        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
+    )
+    try writeState(state, to: stateURL)
+
+    let managedHeaded = try runAgentKeychain([
+        "browser", "headed", "GitHub",
+        "--url", "https://github.com",
+        "--cdp-port", "9222",
+        "--reason", "Open GitHub headed for browser auth"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(managedHeaded.exitCode, 0, "browser headed")
+
+    let managedHeadless = try runAgentKeychain([
+        "browser", "headless", "GitHub",
+        "--url", "about:blank",
+        "--cdp-port", "9222",
+        "--reason", "Open GitHub headless for approved automation"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(managedHeadless.exitCode, 0, "browser headless")
+
+    let cdp = try runAgentKeychain([
+        "browser", "cdp", "GitHub"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(cdp.exitCode, 0, "browser cdp")
+    let cdpObject = try JSONSerialization.jsonObject(with: Data(cdp.stdout.utf8)) as? [String: Any]
+    let cdpJSON = try expectUnwrapped(cdpObject, "browser cdp should print JSON")
+    try expectEqual(cdpJSON["browser"] as? String, "HeadlessChrome/126.0.0.0", "browser cdp browser")
+    try expectEqual(cdpJSON["role"] as? String, "regular", "browser cdp role")
+    try expectEqual(cdpJSON["running"] as? Bool, true, "browser cdp running")
+    try expectEqual(cdpJSON["headless"] as? Bool, true, "browser cdp headless")
+    try expectEqual(cdpJSON["cdpPort"] as? Int, 9222, "browser cdp port")
+    try expectEqual(cdpJSON["profilePath"] as? String, expectedUserData, "browser cdp profile")
+    try expectEqual(cdpJSON["agentBrowserCommand"] as? String, "agent-browser --session github connect 9222", "browser cdp agent-browser command")
+
+    let session = try runAgentKeychain([
+        "browser", "session", "GitHub"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(session.exitCode, 0, "browser session")
+    try expectContains(session.stdout, "GitHub mounted running headless CDP available on 127.0.0.1:9222", "browser session stdout")
+
+    state = try readState(stateURL)
+    try expect(!state.detachedMountpoints.contains(mountpoint), "browser launches should leave volume mounted before explicit stop")
+
+    let stop = try runAgentKeychain([
+        "browser", "stop", "GitHub",
+        "--lock-volume"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(stop.exitCode, 0, "browser stop")
+
+    let stoppedCDP = try runAgentKeychain([
+        "browser", "cdp", "GitHub"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(stoppedCDP.exitCode, 0, "stopped browser cdp")
+    let stoppedObject = try JSONSerialization.jsonObject(with: Data(stoppedCDP.stdout.utf8)) as? [String: Any]
+    let stoppedJSON = try expectUnwrapped(stoppedObject, "stopped browser cdp should print JSON")
+    try expectEqual(stoppedJSON["running"] as? Bool, false, "stopped browser cdp running")
+    try expect(stoppedJSON["cdpPort"] is NSNull, "stopped browser cdp should include null port")
+
+    state = try readState(stateURL)
+    try expectEqual(state.browserLaunches.map(\.userDataDir), [expectedUserData, expectedUserData, expectedUserData, expectedUserData], "browser launch profile")
     try expectEqual(state.browserLaunches.map(\.additionalArguments), [[
         "https://github.com"
     ], [
@@ -589,8 +657,19 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
         "--remote-debugging-port=9222",
         "about:blank",
         "--remote-debugging-address=127.0.0.1"
+    ], [
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=9222",
+        "https://github.com"
+    ], [
+        "--headless=new",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=9222",
+        "about:blank"
     ]], "browser launch arguments")
-    try expect(!state.detachedMountpoints.contains(mountpoint), "browser open should leave volume mounted")
+    try expectEqual(state.browserStops, [expectedUserData, expectedUserData, expectedUserData], "managed browser stop calls")
+    try expectEqual(state.cdpInspections, [9222, 9222, 9222], "managed browser CDP inspections")
+    try expect(state.detachedMountpoints.contains(mountpoint), "browser stop --lock-volume should lock volume")
 
     let delete = try runAgentKeychain([
         "browser", "delete", "GitHub",
@@ -603,10 +682,18 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     try expectContains(audit, "\"event\":\"browser_created\"", "browser created audit")
     try expectContains(audit, "\"event\":\"browser_path_resolved\"", "browser path audit")
     try expectContains(audit, "\"event\":\"browser_opened\"", "browser opened audit")
+    try expectContains(audit, "\"event\":\"browser_headed_started\"", "browser headed audit")
+    try expectContains(audit, "\"event\":\"browser_headless_started\"", "browser headless audit")
+    try expectContains(audit, "\"event\":\"browser_cdp_inspected\"", "browser cdp audit")
+    try expectContains(audit, "\"event\":\"browser_session_inspected\"", "browser session audit")
+    try expectContains(audit, "\"event\":\"browser_stopped\"", "browser stopped audit")
     try expectNotContains(audit, "\"event\":\"browser_exited\"", "browser open should not audit unobserved exit")
     try expectContains(audit, "\"event\":\"browser_deleted\"", "browser deleted audit")
     try expectNotContains(audit, "--headless=new", "audit should not contain raw Chrome args")
     try expectNotContains(audit, "about:blank", "audit should not contain raw Chrome URL args")
+    try expectNotContains(audit, "https://github.com", "audit should not contain managed browser URL")
+    try expectNotContains(audit, expectedUserData, "audit should not contain browser profile path")
+    try expectNotContains(audit, "ws://127.0.0.1:9222", "audit should not contain CDP websocket URL")
 }
 
 func testRunCommandSecretInjectionAndRemovedResourceOptions() throws {

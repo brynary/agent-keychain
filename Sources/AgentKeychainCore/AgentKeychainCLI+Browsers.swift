@@ -7,10 +7,79 @@ private struct ResolvedBrowserProfile {
     let userDataDir: String
 }
 
+private enum ManagedBrowserMode {
+    case headed
+    case headless
+
+    var commandName: String {
+        switch self {
+        case .headed:
+            return "headed"
+        case .headless:
+            return "headless"
+        }
+    }
+
+    var auditEvent: String {
+        switch self {
+        case .headed:
+            return "browser_headed_started"
+        case .headless:
+            return "browser_headless_started"
+        }
+    }
+}
+
+private struct BrowserCDPOutput: Encodable {
+    let browser: String?
+    let role: String
+    let running: Bool
+    let headless: Bool?
+    let cdpPort: Int?
+    let webSocketDebuggerUrl: String?
+    let profilePath: String
+    let agentBrowserCommand: String?
+
+    enum CodingKeys: String, CodingKey {
+        case browser
+        case role
+        case running
+        case headless
+        case cdpPort
+        case webSocketDebuggerUrl
+        case profilePath
+        case agentBrowserCommand
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try encodeNullable(browser, forKey: .browser, into: &container)
+        try container.encode(role, forKey: .role)
+        try container.encode(running, forKey: .running)
+        try encodeNullable(headless, forKey: .headless, into: &container)
+        try encodeNullable(cdpPort, forKey: .cdpPort, into: &container)
+        try encodeNullable(webSocketDebuggerUrl, forKey: .webSocketDebuggerUrl, into: &container)
+        try container.encode(profilePath, forKey: .profilePath)
+        try encodeNullable(agentBrowserCommand, forKey: .agentBrowserCommand, into: &container)
+    }
+
+    private func encodeNullable<T: Encodable>(
+        _ value: T?,
+        forKey key: CodingKeys,
+        into container: inout KeyedEncodingContainer<CodingKeys>
+    ) throws {
+        if let value {
+            try container.encode(value, forKey: key)
+        } else {
+            try container.encodeNil(forKey: key)
+        }
+    }
+}
+
 extension AgentKeychainCLI {
     func browser(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let subcommand = arguments.first else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser <create|open|path|list>")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser <create|open|headed|headless|stop|cdp|session|path|list|delete>")
         }
 
         switch subcommand {
@@ -18,6 +87,16 @@ extension AgentKeychainCLI {
             return try browserCreate(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
         case "open":
             return try browserOpen(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "headed":
+            return try browserManagedStart(mode: .headed, arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "headless":
+            return try browserManagedStart(mode: .headless, arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "stop":
+            return try browserStop(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "cdp":
+            return try browserCDP(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
+        case "session":
+            return try browserSession(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
         case "path":
             return try browserPath(arguments: Array(arguments.dropFirst()), workingDirectory: workingDirectory)
         case "list":
@@ -100,6 +179,192 @@ extension AgentKeychainCLI {
         try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: resolved.config.project.name, event: "browser_opened", result: "success", role: roleName, resource: name, reason: reason))
         try dependencies.browserLauncher.launchChrome(userDataDir: resolved.userDataDir, additionalArguments: chromeArguments)
         return CommandResult(exitCode: 0, stdout: "Opened browser \(name)\n")
+    }
+
+    private func browserManagedStart(mode: ManagedBrowserMode, arguments: [String], workingDirectory: URL) throws -> CommandResult {
+        guard let name = arguments.first, !name.hasPrefix("--") else {
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser \(mode.commandName) NAME --url URL --cdp-port PORT [--reason TEXT]")
+        }
+        let options = try ParsedOptions(
+            arguments: Array(arguments.dropFirst()),
+            valueOptions: ["--url", "--cdp-port", "--reason", "--role"]
+        )
+        try rejectRemovedRoleOption(options, command: "browser \(mode.commandName)")
+        guard let url = options.value(for: "--url") else {
+            throw AgentKeychainError.invalidArguments("browser \(mode.commandName) requires --url")
+        }
+        guard let cdpPortValue = options.value(for: "--cdp-port") else {
+            throw AgentKeychainError.invalidArguments("browser \(mode.commandName) requires --cdp-port")
+        }
+        let validatedURL = try validatedManagedBrowserURL(url)
+        let cdpPort = try validatedCDPPort(cdpPortValue)
+        let reason = options.value(for: "--reason")
+        let store = ConfigStore(projectRoot: workingDirectory)
+        let audit = AuditLog(url: store.auditURL)
+        let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
+        let resolved = try resolveBrowserProfile(
+            name: name,
+            reason: reason,
+            store: store,
+            workingDirectory: workingDirectory,
+            audit: audit,
+            runID: runID
+        )
+        let roleName = resolved.browser.role
+        let managedLock = try ManagedVolumeLock.acquire(projectRoot: workingDirectory, volumeName: resolved.browser.volume)
+        defer { managedLock.release() }
+        try mountBrowserVolumeIfNeeded(resolved, roleName: roleName, reason: reason, store: store, audit: audit, runID: runID, workingDirectory: workingDirectory)
+        try ensureBrowserProfileDirectory(resolved)
+        _ = try dependencies.browserLauncher.stopChromeProcesses(userDataDir: resolved.userDataDir)
+        try dependencies.browserLauncher.launchChrome(
+            userDataDir: resolved.userDataDir,
+            additionalArguments: managedChromeArguments(mode: mode, url: validatedURL, cdpPort: cdpPort)
+        )
+        if mode == .headless {
+            let version = try waitForCDPVersion(port: cdpPort)
+            guard let version else {
+                throw AgentKeychainError.policy("Headless Chrome did not become available on 127.0.0.1:\(cdpPort).")
+            }
+            guard version.browser.contains("HeadlessChrome") else {
+                throw AgentKeychainError.policy("CDP /json/version did not report HeadlessChrome on 127.0.0.1:\(cdpPort).")
+            }
+        }
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: runID,
+            project: resolved.config.project.name,
+            event: mode.auditEvent,
+            result: "success",
+            role: roleName,
+            resource: name,
+            reason: reason
+        ))
+        return CommandResult(exitCode: 0, stdout: "Started \(mode.commandName) browser \(name)\n")
+    }
+
+    private func browserStop(arguments: [String], workingDirectory: URL) throws -> CommandResult {
+        guard let name = arguments.first, !name.hasPrefix("--") else {
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser stop NAME [--lock-volume]")
+        }
+        let options = try ParsedOptions(
+            arguments: Array(arguments.dropFirst()),
+            booleanFlags: ["--lock-volume"],
+            valueOptions: ["--role"]
+        )
+        try rejectRemovedRoleOption(options, command: "browser stop")
+        let store = ConfigStore(projectRoot: workingDirectory)
+        let audit = AuditLog(url: store.auditURL)
+        let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
+        let resolved = try resolveBrowserProfile(
+            name: name,
+            reason: nil,
+            store: store,
+            workingDirectory: workingDirectory,
+            audit: audit,
+            runID: runID
+        )
+        _ = try dependencies.browserLauncher.stopChromeProcesses(userDataDir: resolved.userDataDir)
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: runID,
+            project: resolved.config.project.name,
+            event: "browser_stopped",
+            result: "success",
+            role: resolved.browser.role,
+            resource: name
+        ))
+        var stdout = "Stopped browser \(name)\n"
+        if options.hasFlag("--lock-volume") {
+            let lockResult = try volumeLock(arguments: [resolved.browser.volume], workingDirectory: workingDirectory)
+            stdout += lockResult.stdout
+        }
+        return CommandResult(exitCode: 0, stdout: stdout)
+    }
+
+    private func browserCDP(arguments: [String], workingDirectory: URL) throws -> CommandResult {
+        guard let name = arguments.first, !name.hasPrefix("--") else {
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser cdp NAME")
+        }
+        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()), valueOptions: ["--role"])
+        try rejectRemovedRoleOption(options, command: "browser cdp")
+        let store = ConfigStore(projectRoot: workingDirectory)
+        let audit = AuditLog(url: store.auditURL)
+        let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
+        let resolved = try resolveBrowserProfile(
+            name: name,
+            reason: nil,
+            store: store,
+            workingDirectory: workingDirectory,
+            audit: audit,
+            runID: runID
+        )
+        let status = try dependencies.browserLauncher.managedChromeStatus(userDataDir: resolved.userDataDir)
+        let version = try status.cdpPort.flatMap { try dependencies.browserLauncher.inspectCDP(port: $0) }
+        let output = BrowserCDPOutput(
+            browser: version?.browser,
+            role: resolved.browser.role,
+            running: status.running,
+            headless: status.headless,
+            cdpPort: status.cdpPort,
+            webSocketDebuggerUrl: version?.webSocketDebuggerUrl,
+            profilePath: resolved.userDataDir,
+            agentBrowserCommand: version == nil ? nil : status.cdpPort.map { agentBrowserCommand(name: name, cdpPort: $0) }
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(output)
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: runID,
+            project: resolved.config.project.name,
+            event: "browser_cdp_inspected",
+            result: "success",
+            role: resolved.browser.role,
+            resource: name
+        ))
+        return CommandResult(exitCode: 0, stdout: String(decoding: data, as: UTF8.self) + "\n")
+    }
+
+    private func browserSession(arguments: [String], workingDirectory: URL) throws -> CommandResult {
+        guard let name = arguments.first, !name.hasPrefix("--") else {
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain browser session NAME")
+        }
+        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()), valueOptions: ["--role"])
+        try rejectRemovedRoleOption(options, command: "browser session")
+        let store = ConfigStore(projectRoot: workingDirectory)
+        let audit = AuditLog(url: store.auditURL)
+        let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
+        let resolved = try resolveBrowserProfile(
+            name: name,
+            reason: nil,
+            store: store,
+            workingDirectory: workingDirectory,
+            audit: audit,
+            runID: runID
+        )
+        let imagePath = absoluteProjectPath(workingDirectory: workingDirectory, path: resolved.volume.image)
+        let mounted = try dependencies.diskImageStore.isMounted(imagePath: imagePath, mountpoint: resolved.volume.mountpoint)
+        let status = try dependencies.browserLauncher.managedChromeStatus(userDataDir: resolved.userDataDir)
+        let version = try status.cdpPort.flatMap { try dependencies.browserLauncher.inspectCDP(port: $0) }
+        let stdout = [
+            name,
+            mounted ? "mounted" : "unmounted",
+            status.running ? "running" : "stopped",
+            browserModeDescription(status),
+            cdpStatusDescription(port: status.cdpPort, available: version != nil)
+        ]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ") + "\n"
+        try audit.append(AuditEvent(
+            timestamp: dependencies.clock.now(),
+            runID: runID,
+            project: resolved.config.project.name,
+            event: "browser_session_inspected",
+            result: "success",
+            role: resolved.browser.role,
+            resource: name
+        ))
+        return CommandResult(exitCode: 0, stdout: stdout)
     }
 
     private func browserPath(arguments: [String], workingDirectory: URL) throws -> CommandResult {
@@ -235,6 +500,79 @@ extension AgentKeychainCLI {
         if FileManager.default.fileExists(atPath: resolved.volume.mountpoint) {
             try FileManager.default.createDirectory(atPath: resolved.userDataDir, withIntermediateDirectories: true)
         }
+    }
+
+    private func managedChromeArguments(mode: ManagedBrowserMode, url: String, cdpPort: Int) -> [String] {
+        var arguments: [String] = []
+        if mode == .headless {
+            arguments.append("--headless=new")
+        }
+        arguments.append("--remote-debugging-address=127.0.0.1")
+        arguments.append("--remote-debugging-port=\(cdpPort)")
+        arguments.append(url)
+        return arguments
+    }
+
+    private func validatedManagedBrowserURL(_ value: String) throws -> String {
+        if value == "about:blank" {
+            return value
+        }
+        guard
+            let components = URLComponents(string: value),
+            let scheme = components.scheme?.lowercased(),
+            ["http", "https"].contains(scheme),
+            components.host != nil
+        else {
+            throw AgentKeychainError.invalidArguments("--url must be http://, https://, or about:blank")
+        }
+        return value
+    }
+
+    private func validatedCDPPort(_ value: String) throws -> Int {
+        guard let port = Int(value), (1...65535).contains(port) else {
+            throw AgentKeychainError.invalidArguments("--cdp-port must be an integer from 1 to 65535")
+        }
+        return port
+    }
+
+    private func waitForCDPVersion(port: Int) throws -> (browser: String, webSocketDebuggerUrl: String?)? {
+        for attempt in 0..<5 {
+            if let version = try dependencies.browserLauncher.inspectCDP(port: port) {
+                return version
+            }
+            if attempt < 4 {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+        return nil
+    }
+
+    private func agentBrowserCommand(name: String, cdpPort: Int) -> String {
+        "agent-browser --session \(sanitizeProjectName(name.lowercased())) connect \(cdpPort)"
+    }
+
+    private func browserModeDescription(_ status: (running: Bool, headless: Bool?, cdpPort: Int?)) -> String {
+        guard status.running else {
+            return ""
+        }
+        switch status.headless {
+        case true:
+            return "headless"
+        case false:
+            return "headed"
+        case nil:
+            return "mode unknown"
+        }
+    }
+
+    private func cdpStatusDescription(port: Int?, available: Bool) -> String {
+        guard let port else {
+            return "CDP unavailable"
+        }
+        if available {
+            return "CDP available on 127.0.0.1:\(port)"
+        }
+        return "CDP unavailable on 127.0.0.1:\(port)"
     }
 
     private func splitPassthroughArguments(_ arguments: [String]) -> (options: [String], passthrough: [String]) {

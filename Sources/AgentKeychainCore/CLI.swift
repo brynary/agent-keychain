@@ -40,7 +40,7 @@ public struct AgentKeychainCLI {
       role       Create, list, show, update, delete, unlock, or lock roles
       secret     Set, get, list, or delete role-scoped secrets
       volume     Create, unlock, lock, inspect, or delete encrypted volumes
-      browser    Create, open, list, or delete isolated Chrome profiles
+      browser    Create, open, manage, inspect, or delete isolated Chrome profiles
       run        Run a command with role-scoped secrets
 
     Global options:

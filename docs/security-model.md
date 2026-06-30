@@ -105,6 +105,29 @@ the backing volume mounted; close Chrome before locking the volume with
 
 The user's normal Chrome profile is not used.
 
+`browser headed` and `browser headless` are managed lifecycle commands for the
+common handoff where a human authenticates in visible Chrome and an agent later
+reuses the same encrypted profile headlessly. Both commands:
+
+- Mount the backing encrypted volume when needed.
+- Ensure the configured Chrome profile directory exists.
+- Stop Chrome processes whose command line uses the exact managed `--user-data-dir`.
+- Launch Chrome with CDP bound to `127.0.0.1` on the supplied `--cdp-port`.
+- Require `--url` on each launch; no URL or CDP defaults are stored in config.
+
+`browser headed` launches visible Chrome. `browser headless` adds
+`--headless=new` and verifies that CDP `/json/version` reports
+`HeadlessChrome` before reporting success.
+
+`browser stop` kills only Chrome processes whose command line uses the exact
+managed profile path. With `--lock-volume`, it then runs the normal volume lock
+behavior for the backing volume.
+
+`browser cdp` and `browser session` are inspect-only commands. They do not
+launch Chrome, mount or unlock volumes, or read browser page content. `browser
+cdp` queries only CDP `/json/version` when a managed Chrome process advertises a
+CDP port.
+
 `browser open` accepts additional Chrome arguments after `--`. The CLI rejects
 arguments that override the managed profile path, such as `--user-data-dir` and
 `--profile-directory`. If Chrome remote debugging is requested, the debugging
@@ -126,6 +149,11 @@ Audit events are appended to:
 
 The log records command lifecycle events, config mutations, keychain unlocks, secret reads, volume operations, browser launches, and policy rejections.
 
+Browser audit events do not include raw URLs, Chrome argument lists, profile
+paths, CDP websocket URLs, cookies, storage state, tokens, page text, or site
+data. Browser auth state stays in the managed Chrome profile; `agent-keychain`
+does not export it.
+
 Entries include a local hash chain with previous and current entry hashes.
 
 The audit log is not tamper-proof. A process running as the user can delete or rewrite it.
@@ -140,7 +168,7 @@ Chrome and macOS may store some browser-related credentials outside the managed 
 
 Remote debugging exposes browser control to local processes that can reach the selected loopback port.
 
-Do not treat encrypted browser profile storage as complete browser credential containment.
+Do not treat encrypted browser profile storage as complete browser credential containment. The managed workflow avoids exporting cookies, storage state, tokens, or page content, but Chrome itself remains a normal user-level application once launched.
 
 For high-risk roles, prefer:
 

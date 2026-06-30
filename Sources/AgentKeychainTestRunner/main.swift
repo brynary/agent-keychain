@@ -190,9 +190,47 @@ final class RecordingBrowserLauncher: BrowserLaunching {
     }
 
     var launches: [Launch] = []
+    var stoppedUserDataDirs: [String] = []
+    var statuses: [String: (running: Bool, headless: Bool?, cdpPort: Int?)] = [:]
+    var cdpVersions: [Int: (browser: String, webSocketDebuggerUrl: String?)] = [:]
+    var cdpInspections: [Int] = []
 
     func launchChrome(userDataDir: String, additionalArguments: [String]) throws {
         launches.append(Launch(userDataDir: userDataDir, additionalArguments: additionalArguments))
+        statuses[userDataDir] = (
+            running: true,
+            headless: additionalArguments.contains("--headless=new"),
+            cdpPort: remoteDebuggingPort(in: additionalArguments)
+        )
+    }
+
+    func stopChromeProcesses(userDataDir: String) throws -> Int {
+        stoppedUserDataDirs.append(userDataDir)
+        let wasRunning = statuses[userDataDir]?.running == true
+        statuses[userDataDir] = (running: false, headless: nil, cdpPort: nil)
+        return wasRunning ? 1 : 0
+    }
+
+    func managedChromeStatus(userDataDir: String) throws -> (running: Bool, headless: Bool?, cdpPort: Int?) {
+        statuses[userDataDir] ?? (running: false, headless: nil, cdpPort: nil)
+    }
+
+    func inspectCDP(port: Int) throws -> (browser: String, webSocketDebuggerUrl: String?)? {
+        cdpInspections.append(port)
+        return cdpVersions[port]
+    }
+
+    private func remoteDebuggingPort(in arguments: [String]) -> Int? {
+        for index in arguments.indices {
+            let argument = arguments[index]
+            if argument.hasPrefix("--remote-debugging-port=") {
+                return Int(argument.dropFirst("--remote-debugging-port=".count))
+            }
+            if argument == "--remote-debugging-port", arguments.indices.contains(index + 1) {
+                return Int(arguments[index + 1])
+            }
+        }
+        return nil
     }
 }
 
@@ -1437,6 +1475,354 @@ func testBrowserOpenPassesGuardedChromeArguments() throws {
     try expect(!auditText.contains("about:blank"), "audit should not contain raw Chrome URL args")
 }
 
+func testBrowserHeadedStartsManagedSessionAndStopsExistingProfile() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "headed fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "headed fixture browser")
+
+    let profilePath = "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury"
+    browser.statuses[profilePath] = (running: true, headless: false, cdpPort: 9222)
+
+    let headed = cli.run([
+        "browser", "headed", "Mercury",
+        "--url", "https://app.mercury.com",
+        "--cdp-port", "9222",
+        "--reason", "Open Mercury headed for passkey login"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(headed.exitCode, 0, "browser headed exit code")
+    try expectEqual(disk.attached.count, 1, "browser headed should mount volume")
+    try expectEqual(browser.stoppedUserDataDirs, [profilePath], "browser headed should stop existing matching profile")
+    try expectEqual(browser.launches, [
+        RecordingBrowserLauncher.Launch(
+            userDataDir: profilePath,
+            additionalArguments: [
+                "--remote-debugging-address=127.0.0.1",
+                "--remote-debugging-port=9222",
+                "https://app.mercury.com"
+            ]
+        )
+    ], "browser headed launch arguments")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(auditText.contains("\"event\":\"browser_headed_started\""), "audit should include browser_headed_started")
+    try expect(!auditText.contains("https://app.mercury.com"), "audit should not contain headed URL")
+    try expect(!auditText.contains(profilePath), "audit should not contain headed profile path")
+}
+
+func testBrowserHeadlessStartsManagedSessionAndVerifiesHeadlessCDP() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "headless fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "headless fixture browser")
+
+    browser.cdpVersions[9222] = (
+        browser: "HeadlessChrome/126.0.0.0",
+        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
+    )
+
+    let profilePath = "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury"
+    let headless = cli.run([
+        "browser", "headless", "Mercury",
+        "--url", "about:blank",
+        "--cdp-port", "9222",
+        "--reason", "Open Mercury for approved automation"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(headless.exitCode, 0, "browser headless exit code")
+    try expectEqual(browser.stoppedUserDataDirs, [profilePath], "browser headless should stop existing matching profile before launch")
+    try expectEqual(browser.launches, [
+        RecordingBrowserLauncher.Launch(
+            userDataDir: profilePath,
+            additionalArguments: [
+                "--headless=new",
+                "--remote-debugging-address=127.0.0.1",
+                "--remote-debugging-port=9222",
+                "about:blank"
+            ]
+        )
+    ], "browser headless launch arguments")
+    try expectEqual(browser.cdpInspections, [9222], "browser headless should verify CDP")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(auditText.contains("\"event\":\"browser_headless_started\""), "audit should include browser_headless_started")
+    try expect(!auditText.contains("about:blank"), "audit should not contain headless URL")
+    try expect(!auditText.contains("ws://127.0.0.1:9222"), "audit should not contain CDP websocket URL")
+}
+
+func testBrowserHeadlessFailsWhenCDPIsUnavailableOrNotHeadless() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "headless failure fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "headless failure fixture browser")
+
+    browser.cdpVersions[9222] = (
+        browser: "Chrome/126.0.0.0",
+        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
+    )
+
+    let notHeadless = cli.run([
+        "browser", "headless", "Mercury",
+        "--url", "about:blank",
+        "--cdp-port", "9222"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(notHeadless.exitCode, 1, "not-headless CDP exit code")
+    try expect(notHeadless.stderr.contains("CDP /json/version did not report HeadlessChrome"), "not-headless CDP message: \(notHeadless.stderr)")
+}
+
+func testBrowserStopStopsExactProfileAndCanLockVolume() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "stop fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "stop fixture browser")
+
+    let profilePath = "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury"
+    browser.statuses[profilePath] = (running: true, headless: true, cdpPort: 9222)
+    disk.mounted.insert("/Volumes/AgentKeychain-demo-FinanceBrowser")
+
+    let stop = cli.run([
+        "browser", "stop", "Mercury",
+        "--lock-volume"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(stop.exitCode, 0, "browser stop exit code")
+    try expectEqual(browser.stoppedUserDataDirs, [profilePath], "browser stop should stop exact managed profile")
+    try expectEqual(disk.attached.count, 0, "browser stop should not mount volume")
+    try expectEqual(disk.detached, ["/Volumes/AgentKeychain-demo-FinanceBrowser"], "browser stop --lock-volume should lock backing volume")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(auditText.contains("\"event\":\"browser_stopped\""), "audit should include browser_stopped")
+    try expect(auditText.contains("\"event\":\"volume_lock_succeeded\""), "audit should include volume_lock_succeeded")
+}
+
+func testBrowserCDPPrintsAttachJSONWithoutMountingOrUnlocking() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "cdp fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "cdp fixture browser")
+
+    let profilePath = "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury"
+    browser.statuses[profilePath] = (running: true, headless: true, cdpPort: 9222)
+    browser.cdpVersions[9222] = (
+        browser: "HeadlessChrome/126.0.0.0",
+        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
+    )
+    let roleUnlocksBefore = keychain.roleUnlocks.count
+
+    let cdp = cli.run([
+        "browser", "cdp", "Mercury"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(cdp.exitCode, 0, "browser cdp exit code")
+    let object = try JSONSerialization.jsonObject(with: Data(cdp.stdout.utf8)) as? [String: Any]
+    let json = try expectUnwrapped(object, "browser cdp should print JSON")
+    try expectEqual(json["browser"] as? String, "HeadlessChrome/126.0.0.0", "cdp browser")
+    try expectEqual(json["role"] as? String, "finance", "cdp role")
+    try expectEqual(json["running"] as? Bool, true, "cdp running")
+    try expectEqual(json["headless"] as? Bool, true, "cdp headless")
+    try expectEqual(json["cdpPort"] as? Int, 9222, "cdp port")
+    try expectEqual(json["webSocketDebuggerUrl"] as? String, "ws://127.0.0.1:9222/devtools/browser/test", "cdp websocket")
+    try expectEqual(json["profilePath"] as? String, profilePath, "cdp profile path")
+    try expectEqual(json["agentBrowserCommand"] as? String, "agent-browser --session mercury connect 9222", "agent-browser command")
+    try expectEqual(disk.attached.count, 0, "browser cdp should not mount")
+    try expectEqual(keychain.roleUnlocks.count, roleUnlocksBefore, "browser cdp should not unlock role keychain")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(auditText.contains("\"event\":\"browser_cdp_inspected\""), "audit should include browser_cdp_inspected")
+    try expect(!auditText.contains(profilePath), "audit should not contain cdp profile path")
+    try expect(!auditText.contains("ws://127.0.0.1:9222"), "audit should not contain websocket URL")
+}
+
+func testBrowserSessionReportsStatusWithoutLaunchingOrUnlocking() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "session fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "session fixture browser")
+
+    let profilePath = "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury"
+    disk.mounted.insert("/Volumes/AgentKeychain-demo-FinanceBrowser")
+    browser.statuses[profilePath] = (running: true, headless: true, cdpPort: 9222)
+    browser.cdpVersions[9222] = (
+        browser: "HeadlessChrome/126.0.0.0",
+        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/test"
+    )
+    let roleUnlocksBefore = keychain.roleUnlocks.count
+
+    let session = cli.run([
+        "browser", "session", "Mercury"
+    ], workingDirectory: temp.url)
+
+    try expectEqual(session.exitCode, 0, "browser session exit code")
+    try expect(session.stdout.contains("Mercury mounted running headless CDP available on 127.0.0.1:9222"), "browser session stdout: \(session.stdout)")
+    try expectEqual(browser.launches.count, 0, "browser session should not launch")
+    try expectEqual(disk.attached.count, 0, "browser session should not mount")
+    try expectEqual(keychain.roleUnlocks.count, roleUnlocksBefore, "browser session should not unlock role keychain")
+
+    let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
+    try expect(auditText.contains("\"event\":\"browser_session_inspected\""), "audit should include browser_session_inspected")
+    try expect(!auditText.contains(profilePath), "audit should not contain session profile path")
+}
+
+func testBrowserManagedSessionValidationRejectsInvalidInputs() throws {
+    let temp = try TemporaryDirectory()
+    let keychain = RecordingKeychainStore()
+    let disk = RecordingDiskImageStore()
+    let browser = RecordingBrowserLauncher()
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, disk: disk, browser: browser)
+
+    let createVolume = cli.run([
+        "volume", "create", "FinanceBrowser",
+        "--role", "finance",
+        "--size", "20g",
+        "--reason", "Create encrypted browser volume for finance sessions",
+    ], workingDirectory: temp.url)
+    try expectEqual(createVolume.exitCode, 0, "validation fixture volume")
+
+    let createBrowser = cli.run([
+        "browser", "create", "Mercury",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--reason", "Create Mercury browser profile for finance workflows"
+    ], workingDirectory: temp.url)
+    try expectEqual(createBrowser.exitCode, 0, "validation fixture browser")
+
+    let missingURL = cli.run([
+        "browser", "headed", "Mercury",
+        "--cdp-port", "9222"
+    ], workingDirectory: temp.url)
+    try expectEqual(missingURL.exitCode, 2, "missing URL exit code")
+    try expect(missingURL.stderr.contains("browser headed requires --url"), "missing URL message: \(missingURL.stderr)")
+
+    let invalidPort = cli.run([
+        "browser", "headless", "Mercury",
+        "--url", "about:blank",
+        "--cdp-port", "70000"
+    ], workingDirectory: temp.url)
+    try expectEqual(invalidPort.exitCode, 2, "invalid port exit code")
+    try expect(invalidPort.stderr.contains("--cdp-port must be an integer from 1 to 65535"), "invalid port message: \(invalidPort.stderr)")
+
+    let invalidURL = cli.run([
+        "browser", "headed", "Mercury",
+        "--url", "file:///tmp/private.html",
+        "--cdp-port", "9222"
+    ], workingDirectory: temp.url)
+    try expectEqual(invalidURL.exitCode, 2, "invalid URL exit code")
+    try expect(invalidURL.stderr.contains("--url must be http://, https://, or about:blank"), "invalid URL message: \(invalidURL.stderr)")
+
+    let unknown = cli.run([
+        "browser", "cdp", "Missing"
+    ], workingDirectory: temp.url)
+    try expectEqual(unknown.exitCode, 2, "unknown browser cdp exit code")
+    try expect(unknown.stderr.contains("Unknown browser profile: Missing"), "unknown browser cdp message: \(unknown.stderr)")
+
+    try expectEqual(browser.launches.count, 0, "invalid managed browser commands should not launch")
+    try expectEqual(browser.stoppedUserDataDirs.count, 0, "invalid managed browser commands should not stop")
+}
+
 func testBrowserOpenRejectsUnsafeChromeArguments() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
@@ -2044,6 +2430,13 @@ let tests: [(String, () throws -> Void)] = [
     ("testBrowserCreateOpenListAndRolePolicy", testBrowserCreateOpenListAndRolePolicy),
     ("testBrowserPathMountsVolumeAndPrintsProfilePath", testBrowserPathMountsVolumeAndPrintsProfilePath),
     ("testBrowserOpenPassesGuardedChromeArguments", testBrowserOpenPassesGuardedChromeArguments),
+    ("testBrowserHeadedStartsManagedSessionAndStopsExistingProfile", testBrowserHeadedStartsManagedSessionAndStopsExistingProfile),
+    ("testBrowserHeadlessStartsManagedSessionAndVerifiesHeadlessCDP", testBrowserHeadlessStartsManagedSessionAndVerifiesHeadlessCDP),
+    ("testBrowserHeadlessFailsWhenCDPIsUnavailableOrNotHeadless", testBrowserHeadlessFailsWhenCDPIsUnavailableOrNotHeadless),
+    ("testBrowserStopStopsExactProfileAndCanLockVolume", testBrowserStopStopsExactProfileAndCanLockVolume),
+    ("testBrowserCDPPrintsAttachJSONWithoutMountingOrUnlocking", testBrowserCDPPrintsAttachJSONWithoutMountingOrUnlocking),
+    ("testBrowserSessionReportsStatusWithoutLaunchingOrUnlocking", testBrowserSessionReportsStatusWithoutLaunchingOrUnlocking),
+    ("testBrowserManagedSessionValidationRejectsInvalidInputs", testBrowserManagedSessionValidationRejectsInvalidInputs),
     ("testBrowserOpenRejectsUnsafeChromeArguments", testBrowserOpenRejectsUnsafeChromeArguments),
     ("testBrowserOpenRejectsProfilePathTraversal", testBrowserOpenRejectsProfilePathTraversal),
     ("testBrowserOpenLeavesBrowserVolumeMounted", testBrowserOpenLeavesBrowserVolumeMounted),

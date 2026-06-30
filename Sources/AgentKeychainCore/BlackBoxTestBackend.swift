@@ -30,6 +30,28 @@ public struct BlackBoxBrowserLaunch: Codable, Equatable, Sendable {
     public var additionalArguments: [String]
 }
 
+public struct BlackBoxBrowserStatus: Codable, Equatable, Sendable {
+    public var running: Bool
+    public var headless: Bool?
+    public var cdpPort: Int?
+
+    public init(running: Bool, headless: Bool?, cdpPort: Int?) {
+        self.running = running
+        self.headless = headless
+        self.cdpPort = cdpPort
+    }
+}
+
+public struct BlackBoxCDPVersion: Codable, Equatable, Sendable {
+    public var browser: String
+    public var webSocketDebuggerUrl: String?
+
+    public init(browser: String, webSocketDebuggerUrl: String?) {
+        self.browser = browser
+        self.webSocketDebuggerUrl = webSocketDebuggerUrl
+    }
+}
+
 public struct BlackBoxCommandInvocation: Codable, Equatable, Sendable {
     public var command: [String]
     public var environment: [String: String]
@@ -50,6 +72,10 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
     public var mountedImages: [String: String]
     public var busyMountpoints: [String]
     public var browserLaunches: [BlackBoxBrowserLaunch]
+    public var browserStops: [String]
+    public var browserStatuses: [String: BlackBoxBrowserStatus]
+    public var cdpVersions: [String: BlackBoxCDPVersion]
+    public var cdpInspections: [Int]
     public var commandInvocations: [BlackBoxCommandInvocation]
     public var authorizations: [String]
     public var attachShouldLeaveUnmounted: Bool
@@ -73,6 +99,10 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
         mountedImages: [String: String] = [:],
         busyMountpoints: [String] = [],
         browserLaunches: [BlackBoxBrowserLaunch] = [],
+        browserStops: [String] = [],
+        browserStatuses: [String: BlackBoxBrowserStatus] = [:],
+        cdpVersions: [String: BlackBoxCDPVersion] = [:],
+        cdpInspections: [Int] = [],
         commandInvocations: [BlackBoxCommandInvocation] = [],
         authorizations: [String] = [],
         attachShouldLeaveUnmounted: Bool = false,
@@ -95,6 +125,10 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
         self.mountedImages = mountedImages
         self.busyMountpoints = busyMountpoints
         self.browserLaunches = browserLaunches
+        self.browserStops = browserStops
+        self.browserStatuses = browserStatuses
+        self.cdpVersions = cdpVersions
+        self.cdpInspections = cdpInspections
         self.commandInvocations = commandInvocations
         self.authorizations = authorizations
         self.attachShouldLeaveUnmounted = attachShouldLeaveUnmounted
@@ -310,7 +344,51 @@ private final class BlackBoxBrowserLauncher: BrowserLaunching {
     func launchChrome(userDataDir: String, additionalArguments: [String]) throws {
         try store.update { state in
             state.browserLaunches.append(BlackBoxBrowserLaunch(userDataDir: userDataDir, additionalArguments: additionalArguments))
+            state.browserStatuses[userDataDir] = BlackBoxBrowserStatus(
+                running: true,
+                headless: additionalArguments.contains("--headless=new"),
+                cdpPort: remoteDebuggingPort(in: additionalArguments)
+            )
         }
+    }
+
+    func stopChromeProcesses(userDataDir: String) throws -> Int {
+        try store.update { state in
+            state.browserStops.append(userDataDir)
+            let wasRunning = state.browserStatuses[userDataDir]?.running == true
+            state.browserStatuses[userDataDir] = BlackBoxBrowserStatus(running: false, headless: nil, cdpPort: nil)
+            return wasRunning ? 1 : 0
+        }
+    }
+
+    func managedChromeStatus(userDataDir: String) throws -> (running: Bool, headless: Bool?, cdpPort: Int?) {
+        let status = try store.read().browserStatuses[userDataDir]
+        return (
+            running: status?.running ?? false,
+            headless: status?.headless,
+            cdpPort: status?.cdpPort
+        )
+    }
+
+    func inspectCDP(port: Int) throws -> (browser: String, webSocketDebuggerUrl: String?)? {
+        let version = try store.update { state in
+            state.cdpInspections.append(port)
+            return state.cdpVersions[String(port)]
+        }
+        return version.map { (browser: $0.browser, webSocketDebuggerUrl: $0.webSocketDebuggerUrl) }
+    }
+
+    private func remoteDebuggingPort(in arguments: [String]) -> Int? {
+        for index in arguments.indices {
+            let argument = arguments[index]
+            if argument.hasPrefix("--remote-debugging-port=") {
+                return Int(argument.dropFirst("--remote-debugging-port=".count))
+            }
+            if argument == "--remote-debugging-port", arguments.indices.contains(index + 1) {
+                return Int(arguments[index + 1])
+            }
+        }
+        return nil
     }
 }
 

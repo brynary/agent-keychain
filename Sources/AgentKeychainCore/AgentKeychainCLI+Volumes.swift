@@ -130,7 +130,7 @@ extension AgentKeychainCLI {
         return CommandResult(exitCode: 0, stdout: "Unlocked volume \(name)\n")
     }
 
-    private func volumeLock(arguments: [String], workingDirectory: URL) throws -> CommandResult {
+    func volumeLock(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
             throw AgentKeychainError.invalidArguments("Usage: agent-keychain volume lock NAME")
         }
