@@ -158,9 +158,9 @@ The repository ignores local keychains, volumes, locks, the audit log, and the i
 
 Example roles:
 
-- `regular`: day-to-day lower-risk work, with secret export allowed.
-- `workspace-admin`: identity and workspace administration, with reasons required and secret export denied.
-- `finance`: money movement and billing workflows, with reasons required and secret export denied.
+- `regular`: day-to-day lower-risk work.
+- `workspace-admin`: identity and workspace administration, with reasons required.
+- `finance`: money movement and billing workflows, with reasons required.
 
 Roles own their own secrets, volumes, and browser profiles. Commands that use one configured resource infer the owning role from trusted config, then apply that role's policy. Commands that create ownership, delete resources, or run a child process still require an explicit role.
 
@@ -192,7 +192,7 @@ Secret commands:
 
 ```sh
 agent-keychain secret set NAME --role ROLE --reason TEXT
-agent-keychain secret get NAME [--reason TEXT] [--allow-raw-secret]
+agent-keychain secret get NAME [--reason TEXT]
 agent-keychain secret list [--role ROLE]
 agent-keychain secret delete NAME --role ROLE --reason TEXT
 ```
@@ -224,7 +224,6 @@ agent-keychain run \
   --role ROLE \
   [--reason TEXT] \
   [--secret ENV_NAME=SECRET_NAME]... \
-  [--allow-privileged-env] \
   [--volume VOLUME]... \
   [--browser BROWSER]... \
   [--detach-on-exit] \

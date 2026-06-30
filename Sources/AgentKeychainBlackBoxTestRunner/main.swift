@@ -138,7 +138,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -147,7 +146,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -297,19 +295,32 @@ func testRoleManagementCommands() throws {
 
     let show = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(show.stdout, "\"description\":\"Analysis work\"", "role show")
-    try expectContains(show.stdout, "\"allowSecretExport\":true", "role create defaults to secret export")
+    try expectNotContains(show.stdout, "allowSecretExport", "role show should not include removed secret export policy")
 
     let update = try runAgentKeychain([
         "role", "update", "analyst",
         "--reason", "Tighten analyst policy",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
     let updated = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(updated.stdout, "\"requireReason\":true", "updated role requires reason")
-    try expectContains(updated.stdout, "\"allowSecretExport\":false", "updated role denies secret export")
+    try expectNotContains(updated.stdout, "allowSecretExport", "updated role should not include removed secret export policy")
+
+    let removedCreateFlag = try runAgentKeychain([
+        "role", "create", "auditor",
+        "--reason", "Create auditor role",
+        "--deny-secret-export",
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(removedCreateFlag.exitCode, 2, "removed role create export flag exit code")
+
+    let removedUpdateFlag = try runAgentKeychain([
+        "role", "update", "analyst",
+        "--reason", "Try removed export flag",
+        "--allow-secret-export",
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(removedUpdateFlag.exitCode, 2, "removed role update export flag exit code")
 
     let delete = try runAgentKeychain([
         "role", "delete", "analyst",
@@ -362,19 +373,25 @@ func testSecretCommandsAndPolicies() throws {
     try expectEqual(rejectedRole.exitCode, 2, "explicit role secret get exit code")
     try expectContains(rejectedRole.stderr, "secret get infers the role from secret ownership; omit --role", "explicit role secret stderr")
 
-    let rawDenied = try runAgentKeychain([
+    let missingReason = try runAgentKeychain([
+        "secret", "get", "mercury-api-key",
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(missingReason.exitCode, 2, "finance missing reason exit code")
+    try expectContains(missingReason.stderr, "Role finance requires --reason", "finance missing reason stderr")
+
+    let financeGet = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
         "--reason", "Review approved invoices"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(rawDenied.exitCode, 1, "finance raw denied exit code")
-    try expectContains(rawDenied.stderr, "disallows secret export", "finance raw denied stderr")
+    try expectEqual(financeGet.exitCode, 0, "finance secret get exit code")
+    try expectEqual(financeGet.stdout, "mercury_black_box\n", "finance secret get stdout")
 
-    let rawAllowed = try runAgentKeychain([
+    let removedFlag = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
         "--reason", "Review approved invoices",
         "--allow-raw-secret"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(rawAllowed.stdout, "mercury_black_box\n", "finance raw allowed stdout")
+    try expectEqual(removedFlag.exitCode, 2, "removed raw secret flag exit code")
 
     let delete = try runAgentKeychain([
         "secret", "delete", "github-readonly",
@@ -391,8 +408,8 @@ func testSecretCommandsAndPolicies() throws {
     try expectContains(audit, "\"event\":\"secret_set\"", "secret set audit")
     try expectContains(audit, "\"event\":\"secret_read\"", "secret read audit")
     try expectContains(audit, "\"event\":\"secret_delete\"", "secret delete audit")
-    try expectContains(audit, "\"event\":\"raw_secret_stdout_override\"", "raw override audit")
     try expectContains(audit, "\"event\":\"policy_rejection\"", "secret policy rejection audit")
+    try expectNotContains(audit, "\"event\":\"raw_secret_stdout_override\"", "raw override audit should be removed")
     try expectNotContains(audit, "ghp_black_box", "audit should not contain regular secret")
     try expectNotContains(audit, "mercury_black_box", "audit should not contain finance secret")
 }
@@ -602,17 +619,16 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
     ], workingDirectory: temp.url, stateURL: stateURL, secret: "mercury_run_secret")
     try expectEqual(setFinance.exitCode, 0, "run fixture finance secret")
 
-    let financeDenied = try runAgentKeychain([
+    let financeRun = try runAgentKeychain([
         "run",
         "--role", "finance",
         "--reason", "Review approved payments",
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(financeDenied.exitCode, 1, "finance env denied")
-    try expectContains(financeDenied.stderr, "disallows secret export to environment variables", "finance env denied stderr")
+    try expectEqual(financeRun.exitCode, 0, "finance env run")
 
-    let financeAllowed = try runAgentKeychain([
+    let removedFlag = try runAgentKeychain([
         "run",
         "--role", "finance",
         "--reason", "Review approved payments",
@@ -620,7 +636,7 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(financeAllowed.exitCode, 0, "finance env allowed")
+    try expectEqual(removedFlag.exitCode, 2, "removed privileged env flag")
 
     let createVolume = try runAgentKeychain([
         "volume", "create", "FinanceBrowser",
@@ -656,7 +672,7 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
     try expect(!state.detachedMountpoints.contains(mountpoint), "run detach-on-exit should leave browser volume mounted")
 
     let audit = try readAudit(projectRoot: temp.url)
-    try expectContains(audit, "\"event\":\"privileged_secret_export_override\"", "privileged secret export audit")
+    try expectNotContains(audit, "\"event\":\"privileged_secret_export_override\"", "privileged secret export audit should be removed")
     try expectContains(audit, "\"event\":\"command_started\"", "run command started audit")
     try expectContains(audit, "\"event\":\"command_completed\"", "run command completed audit")
     try expectNotContains(audit, "ghp_run_secret", "audit should not contain regular run secret")

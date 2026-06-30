@@ -424,6 +424,6 @@ extension AgentKeychainCLI {
     }
 
     func defaultsToDetachOnExit(_ role: RoleConfig) -> Bool {
-        role.requireReason || !role.allowSecretExport
+        role.requireReason
     }
 }

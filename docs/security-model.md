@@ -63,7 +63,6 @@ The CLI enforces:
 - Browser profiles can only be opened by their owning role.
 - Single-resource use commands infer the owner role from trusted config.
 - Roles can require a reason.
-- Roles can deny secret export to raw stdout and child-process environment variables.
 - Policy mutations require user presence and a reason.
 
 Policy checks run before touching keychain items, disk images, browser profiles, or child processes where practical.
@@ -131,7 +130,7 @@ Audit events are appended to:
 .agent-keychain/audit.jsonl
 ```
 
-The log records command lifecycle events, config mutations, keychain unlocks, secret reads, volume operations, browser launches, policy rejections, and privileged overrides.
+The log records command lifecycle events, config mutations, keychain unlocks, secret reads, volume operations, browser launches, and policy rejections.
 
 Entries include a local hash chain with previous and current entry hashes.
 

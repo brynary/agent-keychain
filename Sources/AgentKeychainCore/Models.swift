@@ -16,7 +16,6 @@ public struct RoleKeychainConfig: Codable, Equatable, Sendable {
 public struct RoleConfig: Codable, Equatable, Sendable {
     public var description: String
     public var requireReason: Bool
-    public var allowSecretExport: Bool
     public var keychain: RoleKeychainConfig? = nil
 }
 

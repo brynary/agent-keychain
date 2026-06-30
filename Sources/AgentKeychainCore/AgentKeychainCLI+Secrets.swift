@@ -104,9 +104,12 @@ extension AgentKeychainCLI {
 
     private func secretGet(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain secret get NAME [--reason TEXT] [--allow-raw-secret]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain secret get NAME [--reason TEXT]")
         }
-        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()), booleanFlags: ["--allow-raw-secret"])
+        let options = try ParsedOptions(
+            arguments: Array(arguments.dropFirst()),
+            valueOptions: ["--reason", "--role"]
+        )
         try rejectRemovedRoleOption(options, command: "secret get")
         let reason = options.value(for: "--reason")
         let store = ConfigStore(projectRoot: workingDirectory)
@@ -137,49 +140,6 @@ extension AgentKeychainCLI {
             audit: audit,
             runID: runID
         )
-
-        if !role.allowSecretExport && !options.hasFlag("--allow-raw-secret") {
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "policy_rejection",
-                result: "denied",
-                role: roleName,
-                resource: name,
-                reason: reason,
-                message: "Role \(roleName) disallows secret export"
-            ))
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "command_failed",
-                result: "failed",
-                role: roleName,
-                resource: name,
-                reason: reason,
-                message: "Role \(roleName) disallows secret export"
-            ))
-            throw AgentKeychainError.policy("Role \(roleName) disallows secret export. Re-run with --allow-raw-secret --reason TEXT.")
-        }
-
-        if options.hasFlag("--allow-raw-secret") {
-            try dependencies.userPresenceAuthorizer.authorize(
-                reason: reason ?? "Allow raw secret stdout",
-                progressReporter: dependencies.progressReporter
-            )
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "raw_secret_stdout_override",
-                result: "success",
-                role: roleName,
-                resource: name,
-                reason: reason
-            ))
-        }
 
         let value = try readKeychainItem(
             service: secret.keychainService,

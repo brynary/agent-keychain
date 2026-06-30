@@ -21,36 +21,6 @@ extension AgentKeychainCLI {
         )
         var environment: [String: String] = [:]
 
-        if !role.allowSecretExport && !request.secretBindings.isEmpty {
-            guard request.allowPrivilegedEnv else {
-                try audit.append(AuditEvent(
-                    timestamp: dependencies.clock.now(),
-                    runID: runID,
-                    project: config.project.name,
-                    event: "policy_rejection",
-                    result: "denied",
-                    role: request.role,
-                    reason: request.reason,
-                    message: "Role \(request.role) disallows secret export to environment variables"
-                ))
-                throw AgentKeychainError.policy("Role \(request.role) disallows secret export to environment variables. Re-run with --allow-privileged-env --reason TEXT.")
-            }
-            _ = try PolicyEngine.requireMutationReason(request.reason)
-            try dependencies.userPresenceAuthorizer.authorize(
-                reason: request.reason ?? "Allow privileged secret export to environment variables",
-                progressReporter: dependencies.progressReporter
-            )
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "privileged_secret_export_override",
-                result: "success",
-                role: request.role,
-                reason: request.reason
-            ))
-        }
-
         for binding in request.secretBindings {
             guard let secret = config.secrets[binding.secretName] else {
                 throw AgentKeychainError.invalidArguments("Unknown secret: \(binding.secretName)")
@@ -223,7 +193,6 @@ private struct RunRequest {
     let secretBindings: [SecretBinding]
     let volumes: [String]
     let browsers: [String]
-    let allowPrivilegedEnv: Bool
     let detachOnExit: Bool
     let command: [String]
 
@@ -233,7 +202,6 @@ private struct RunRequest {
         var secretBindings: [SecretBinding] = []
         var volumes: [String] = []
         var browsers: [String] = []
-        var allowPrivilegedEnv = false
         var detachOnExit = false
         var index = 0
         var command: [String] = []
@@ -269,8 +237,6 @@ private struct RunRequest {
                 index += 1
                 guard index < arguments.count else { throw AgentKeychainError.invalidArguments("--browser requires a value") }
                 browsers.append(arguments[index])
-            case "--allow-privileged-env":
-                allowPrivilegedEnv = true
             case "--detach-on-exit":
                 detachOnExit = true
             default:
@@ -291,7 +257,6 @@ private struct RunRequest {
         self.secretBindings = secretBindings
         self.volumes = volumes
         self.browsers = browsers
-        self.allowPrivilegedEnv = allowPrivilegedEnv
         self.detachOnExit = detachOnExit
         self.command = command
     }

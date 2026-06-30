@@ -213,7 +213,7 @@ public struct ParsedOptions {
     private var values: [String: String] = [:]
     private var flags: Set<String> = []
 
-    public init(arguments: [String], booleanFlags: Set<String> = []) throws {
+    public init(arguments: [String], booleanFlags: Set<String> = [], valueOptions: Set<String>? = nil) throws {
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]
@@ -224,6 +224,9 @@ public struct ParsedOptions {
                 flags.insert(argument)
                 index += 1
                 continue
+            }
+            if let valueOptions, !valueOptions.contains(argument) {
+                throw AgentKeychainError.invalidArguments("Unexpected option: \(argument)")
             }
             guard index + 1 < arguments.count else {
                 throw AgentKeychainError.invalidArguments("Missing value for \(argument)")

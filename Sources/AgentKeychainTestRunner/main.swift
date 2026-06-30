@@ -321,7 +321,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: workingDirectory)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -330,7 +329,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: workingDirectory)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -507,7 +505,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
         "--reason", "Create analyst role for reporting workflows",
         "--description", "Reporting and read-only analytics",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: temp.url)
 
     try expectEqual(created.exitCode, 0, "role create exit code")
@@ -518,7 +515,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role in config")
     try expectEqual(analyst.description, "Reporting and read-only analytics", "analyst description")
     try expectEqual(analyst.requireReason, true, "analyst reason")
-    try expectEqual(analyst.allowSecretExport, false, "analyst secret export")
     try expectEqual(analyst.keychain?.path, ".agent-keychain/keychains/roles/analyst.keychain-db", "analyst keychain path")
     try expectEqual(analyst.keychain?.passwordService, "agent-keychain.project.demo.role.analyst.keychain-password", "analyst keychain password service")
     try expectEqual(analyst.keychain?.ttlSeconds, 300, "analyst keychain ttl")
@@ -539,9 +535,15 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(show.exitCode, 0, "role show exit code")
     try expectEqual(
         show.stdout,
-        "{\"allowSecretExport\":false,\"description\":\"Reporting and read-only analytics\",\"keychain\":{\"passwordService\":\"agent-keychain.project.demo.role.analyst.keychain-password\",\"path\":\".agent-keychain/keychains/roles/analyst.keychain-db\",\"ttlSeconds\":300},\"requireReason\":true}\n",
+        "{\"description\":\"Reporting and read-only analytics\",\"keychain\":{\"passwordService\":\"agent-keychain.project.demo.role.analyst.keychain-password\",\"path\":\".agent-keychain/keychains/roles/analyst.keychain-db\",\"ttlSeconds\":300},\"requireReason\":true}\n",
         "role show JSON"
     )
+    let removedFlag = cli.run([
+        "role", "create", "auditor",
+        "--reason", "Create auditor role",
+        "--deny-secret-export",
+    ], workingDirectory: temp.url)
+    try expectEqual(removedFlag.exitCode, 2, "removed role create export flag exit code")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
     try expect(auditText.contains("\"event\":\"command_started\""), "audit should include command_started")
@@ -568,7 +570,6 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
         "--reason", "Tighten analyst role policy",
         "--description", "Read-only reporting",
         "--require-reason",
-        "--deny-secret-export",
     ], workingDirectory: temp.url)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
@@ -577,7 +578,20 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role after update")
     try expectEqual(analyst.description, "Read-only reporting", "updated role description")
     try expectEqual(analyst.requireReason, true, "updated require reason")
-    try expectEqual(analyst.allowSecretExport, false, "updated deny secret export")
+
+    let removedDenyFlag = cli.run([
+        "role", "update", "analyst",
+        "--reason", "Try removed deny export flag",
+        "--deny-secret-export",
+    ], workingDirectory: temp.url)
+    try expectEqual(removedDenyFlag.exitCode, 2, "removed deny secret export update flag exit code")
+
+    let removedAllowFlag = cli.run([
+        "role", "update", "analyst",
+        "--reason", "Try removed allow export flag",
+        "--allow-secret-export",
+    ], workingDirectory: temp.url)
+    try expectEqual(removedAllowFlag.exitCode, 2, "removed allow secret export update flag exit code")
 
     let setSecret = cli.run([
         "secret", "set", "analyst-token",
@@ -962,7 +976,7 @@ func testUnfilteredDiscoveryOutputIncludesRoleContext() throws {
     try expect(volumes.stdout.contains("regular  RegularBrowser  unmounted"), "volume status should include role, volume, and status: \(volumes.stdout)")
 }
 
-func testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput() throws {
+func testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["mercury_secret"])
@@ -987,31 +1001,28 @@ func testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput() throws {
 
     let missingReason = cli.run([
         "secret", "get", "mercury-api-key",
-        "--allow-raw-secret"
     ], workingDirectory: temp.url)
-    try expectEqual(missingReason.exitCode, 2, "missing privileged reason exit code")
+    try expectEqual(missingReason.exitCode, 2, "missing reason exit code")
     try expect(missingReason.stderr.contains("Role finance requires --reason"), "missing reason message: \(missingReason.stderr)")
 
-    let rawDenied = cli.run([
+    let allowed = cli.run([
         "secret", "get", "mercury-api-key",
         "--reason", "Review approved contractor invoices"
     ], workingDirectory: temp.url)
-    try expectEqual(rawDenied.exitCode, 1, "raw denied exit code")
-    try expect(rawDenied.stderr.contains("Role finance disallows secret export"), "raw denied message: \(rawDenied.stderr)")
+    try expectEqual(allowed.exitCode, 0, "secret get exit code")
+    try expectEqual(allowed.stdout, "mercury_secret\n", "secret get stdout")
 
-    let allowed = cli.run([
+    let removedFlag = cli.run([
         "secret", "get", "mercury-api-key",
         "--reason", "Review approved contractor invoices",
         "--allow-raw-secret"
     ], workingDirectory: temp.url)
-    try expectEqual(allowed.exitCode, 0, "privileged raw secret exit code")
-    try expectEqual(allowed.stdout, "mercury_secret\n", "privileged raw secret stdout")
+    try expectEqual(removedFlag.exitCode, 2, "removed raw secret flag exit code")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
     try expect(auditText.contains("\"event\":\"policy_rejection\""), "audit should include policy rejection")
-    try expect(auditText.contains("\"event\":\"command_failed\""), "audit should include command_failed for rejected secret get")
-    try expect(auditText.contains("\"event\":\"raw_secret_stdout_override\""), "audit should include raw secret override")
-    try expect(!auditText.contains("mercury_secret"), "audit must not contain privileged secret value")
+    try expect(!auditText.contains("\"event\":\"raw_secret_stdout_override\""), "audit should not include removed raw secret override")
+    try expect(!auditText.contains("mercury_secret"), "audit must not contain secret value")
 }
 
 func testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle() throws {
@@ -1903,7 +1914,7 @@ func testRunInjectsAllowedSecretAndAuditsCommand() throws {
     try expect(!auditText.contains("ghp_regular_secret"), "audit must not contain injected secret")
 }
 
-func testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride() throws {
+func testRunRejectsCrossRoleAndRemovedPrivilegedEnvFlag() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["mercury_secret"])
@@ -1927,18 +1938,18 @@ func testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride() throws {
     try expect(crossRole.stderr.contains("Refusing to use secret mercury-api-key from role finance in role regular."), "run cross-role message: \(crossRole.stderr)")
     try expectEqual(runner.invocations.count, 0, "cross-role run must not invoke command")
 
-    let rawDenied = cli.run([
+    let allowed = cli.run([
         "run",
         "--role", "finance",
         "--reason", "Review approved payments",
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url)
-    try expectEqual(rawDenied.exitCode, 1, "privileged secret export denied exit code")
-    try expect(rawDenied.stderr.contains("Role finance disallows secret export to environment variables"), "privileged secret export denied message: \(rawDenied.stderr)")
-    try expectEqual(runner.invocations.count, 0, "denied privileged run must not invoke command")
+    try expectEqual(allowed.exitCode, 0, "same-role run with secret exit code")
+    try expectEqual(runner.invocations.count, 1, "same-role run invokes command")
+    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "same-role secret export value")
 
-    let allowed = cli.run([
+    let removedFlag = cli.run([
         "run",
         "--role", "finance",
         "--reason", "Review approved payments",
@@ -1946,17 +1957,16 @@ func testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride() throws {
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url)
-    try expectEqual(allowed.exitCode, 0, "privileged secret export allowed exit code")
-    try expectEqual(runner.invocations.count, 1, "allowed privileged run invokes command")
-    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "privileged secret export value")
+    try expectEqual(removedFlag.exitCode, 2, "removed privileged env flag exit code")
+    try expectEqual(runner.invocations.count, 1, "removed flag must not invoke another command")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    try expect(auditText.contains("\"event\":\"privileged_secret_export_override\""), "audit should include privileged secret export override")
+    try expect(!auditText.contains("\"event\":\"privileged_secret_export_override\""), "audit should not include removed privileged secret export override")
     try expect(auditText.contains("\"event\":\"policy_rejection\""), "audit should include run policy rejection")
     try expect(!auditText.contains("mercury_secret"), "audit must not contain finance secret")
 }
 
-func testPolicyMutationsAndRawOverridesRequireUserPresence() throws {
+func testPolicyMutationsRequireUserPresence() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["mercury_secret"])
@@ -1982,10 +1992,9 @@ func testPolicyMutationsAndRawOverridesRequireUserPresence() throws {
     let rawGet = cli.run([
         "secret", "get", "mercury-api-key",
         "--reason", "Review approved contractor invoices",
-        "--allow-raw-secret"
     ], workingDirectory: temp.url)
-    try expectEqual(rawGet.exitCode, 0, "authorized raw secret get")
-    try expect(authorizer.reasons.contains("Review approved contractor invoices"), "raw secret override should require user presence")
+    try expectEqual(rawGet.exitCode, 0, "secret get exit code")
+    try expect(!authorizer.reasons.contains("Review approved contractor invoices"), "secret get should rely on role keychain unlock, not a raw secret override")
 }
 
 func testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution() throws {
@@ -2013,7 +2022,7 @@ func testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution() throws
     )
 }
 
-func testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution() throws {
+func testRunSecretExportDoesNotRequireOverrideProgress() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["mercury_secret"])
@@ -2039,18 +2048,17 @@ func testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution() throws
         "run",
         "--role", "finance",
         "--reason", "Review approved payments",
-        "--allow-privileged-env",
         "--secret", "MERCURY_API_KEY=mercury-api-key",
         "--", "agent-command"
     ], workingDirectory: temp.url)
 
-    try expectEqual(run.exitCode, 0, "privileged run exit code")
+    try expectEqual(run.exitCode, 0, "run exit code")
     try expectEqual(run.stdout, "child stdout\n", "progress should not pollute run stdout")
-    try expectEqual(runner.invocations.count, 1, "privileged run child invocation count")
-    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "privileged run injected env")
+    try expectEqual(runner.invocations.count, 1, "run child invocation count")
+    try expectEqual(runner.invocations[0].environment["MERCURY_API_KEY"], "mercury_secret", "run injected env")
     try expect(
-        progress.messages.contains("Waiting for macOS authentication: Review approved payments"),
-        "privileged env override should report progress: \(progress.messages)"
+        !progress.messages.contains("Waiting for macOS authentication: Review approved payments"),
+        "same-role secret export should not require a separate override prompt: \(progress.messages)"
     )
 }
 
@@ -2144,7 +2152,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent", testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent),
     ("testConfigRepairKeychainAccessRewritesProjectAndRoleItems", testConfigRepairKeychainAccessRewritesProjectAndRoleItems),
     ("testUnfilteredDiscoveryOutputIncludesRoleContext", testUnfilteredDiscoveryOutputIncludesRoleContext),
-    ("testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput", testSecretPoliciesRejectCrossRoleAndPrivilegedRawOutput),
+    ("testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag", testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag),
     ("testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle", testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle),
     ("testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure", testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure),
     ("testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle", testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle),
@@ -2166,10 +2174,10 @@ let tests: [(String, () throws -> Void)] = [
     ("testStatusReportsVolumeMountedState", testStatusReportsVolumeMountedState),
     ("testReadOnlyCommandsAuditLifecycle", testReadOnlyCommandsAuditLifecycle),
     ("testRunInjectsAllowedSecretAndAuditsCommand", testRunInjectsAllowedSecretAndAuditsCommand),
-    ("testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride", testRunRejectsCrossRoleAndPrivilegedEnvWithoutOverride),
-    ("testPolicyMutationsAndRawOverridesRequireUserPresence", testPolicyMutationsAndRawOverridesRequireUserPresence),
+    ("testRunRejectsCrossRoleAndRemovedPrivilegedEnvFlag", testRunRejectsCrossRoleAndRemovedPrivilegedEnvFlag),
+    ("testPolicyMutationsRequireUserPresence", testPolicyMutationsRequireUserPresence),
     ("testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution", testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution),
-    ("testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution", testRunPrivilegedSecretExportReportsProgressWithoutStdoutPollution),
+    ("testRunSecretExportDoesNotRequireOverrideProgress", testRunSecretExportDoesNotRequireOverrideProgress),
     ("testUserPresenceAuthorizationFailureStillReportsProgress", testUserPresenceAuthorizationFailureStillReportsProgress),
     ("testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted", testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted)
 ]
