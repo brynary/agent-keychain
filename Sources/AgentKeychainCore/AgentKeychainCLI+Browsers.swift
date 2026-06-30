@@ -556,11 +556,11 @@ extension AgentKeychainCLI {
             return ""
         }
         switch status.headless {
-        case true:
+        case .some(true):
             return "headless"
-        case false:
+        case .some(false):
             return "headed"
-        case nil:
+        case .none:
             return "mode unknown"
         }
     }
