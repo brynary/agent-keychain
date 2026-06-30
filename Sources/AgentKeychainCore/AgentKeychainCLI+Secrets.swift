@@ -117,7 +117,7 @@ extension AgentKeychainCLI {
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
         let secret = try requireSecret(config: config, name: name)
         let roleName = secret.role
-        let role = try PolicyEngine.requireRole(config, roleName)
+        _ = try PolicyEngine.requireRole(config, roleName)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
         try audit.append(AuditEvent(
@@ -130,16 +130,6 @@ extension AgentKeychainCLI {
             resource: name,
             reason: reason
         ))
-
-        try requireReasonIfNeeded(
-            config: config,
-            roleName: roleName,
-            role: role,
-            reason: reason,
-            resource: name,
-            audit: audit,
-            runID: runID
-        )
 
         let value = try readKeychainItem(
             service: secret.keychainService,

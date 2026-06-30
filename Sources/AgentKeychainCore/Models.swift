@@ -3,8 +3,6 @@ import Foundation
 public struct ProjectInfo: Codable, Equatable, Sendable {
     public var name: String
     public var root: String
-    public var keychainPath: String
-    public var keychainPasswordService: String
 }
 
 public struct RoleKeychainConfig: Codable, Equatable, Sendable {
@@ -15,8 +13,7 @@ public struct RoleKeychainConfig: Codable, Equatable, Sendable {
 
 public struct RoleConfig: Codable, Equatable, Sendable {
     public var description: String
-    public var requireReason: Bool
-    public var keychain: RoleKeychainConfig? = nil
+    public var keychain: RoleKeychainConfig
 }
 
 public struct SecretMetadata: Codable, Equatable, Sendable {
@@ -48,9 +45,7 @@ public struct ProjectConfig: Codable, Equatable, Sendable {
         ProjectConfig(
             project: ProjectInfo(
                 name: projectName,
-                root: projectRoot,
-                keychainPath: ".agent-keychain/keychains/project.keychain-db",
-                keychainPasswordService: "agent-keychain.project.\(projectName).keychain-password"
+                root: projectRoot
             ),
             roles: [:],
             secrets: [:],

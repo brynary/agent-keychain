@@ -159,10 +159,10 @@ The repository ignores local keychains, volumes, locks, the audit log, and the i
 Example roles:
 
 - `regular`: day-to-day lower-risk work.
-- `workspace-admin`: identity and workspace administration, with reasons required.
-- `finance`: money movement and billing workflows, with reasons required.
+- `workspace-admin`: identity and workspace administration.
+- `finance`: money movement and billing workflows.
 
-Roles own their own secrets, volumes, and browser profiles. Commands that use one configured resource infer the owning role from trusted config, then apply that role's policy. Commands that create ownership, delete resources, or run a child process still require an explicit role.
+Roles own their own secrets, volumes, and browser profiles. Commands that use one configured resource infer the owning role from trusted config. Commands that create ownership, delete resources, update project policy, or run a child process require an explicit role and/or reason as shown below.
 
 ## Commands
 
@@ -173,7 +173,6 @@ agent-keychain init [--project-name NAME]
 agent-keychain status
 agent-keychain config path
 agent-keychain config trust-current --reason TEXT
-agent-keychain config migrate-role-keychains --reason TEXT
 ```
 
 Role commands:
@@ -184,7 +183,7 @@ agent-keychain role list
 agent-keychain role show NAME
 agent-keychain role unlock NAME [--reason TEXT]
 agent-keychain role lock NAME
-agent-keychain role update NAME --reason TEXT [options]
+agent-keychain role update NAME --reason TEXT --description TEXT
 agent-keychain role delete NAME --reason TEXT
 ```
 
@@ -223,15 +222,13 @@ Run command:
 agent-keychain run \
   --role ROLE \
   [--reason TEXT] \
+  --secret ENV_NAME=SECRET_NAME \
   [--secret ENV_NAME=SECRET_NAME]... \
-  [--volume VOLUME]... \
-  [--browser BROWSER]... \
-  [--detach-on-exit] \
   -- COMMAND [ARGS...]
 ```
 
-`run --detach-on-exit` does not lock volumes that back launched browser profiles.
-Close Chrome first, then lock those volumes explicitly with `agent-keychain volume lock`.
+`run` injects one or more same-role secrets into the child process environment.
+Use `volume unlock`, `volume lock`, and `browser open` explicitly for encrypted volume and browser workflows.
 
 ## Security Model
 

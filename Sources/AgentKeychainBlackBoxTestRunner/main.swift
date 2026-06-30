@@ -137,7 +137,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "role", "create", "workspace-admin",
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
-        "--require-reason",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -145,7 +144,6 @@ func createExampleRolesFixture(projectRoot: URL, stateURL: URL) throws {
         "role", "create", "finance",
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
-        "--require-reason",
     ], workingDirectory: projectRoot, stateURL: stateURL)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -204,13 +202,12 @@ func testProjectLifecycle() throws {
     let config = try readConfig(projectRoot: physical.url)
 
     let state = try readState(physicalStateURL)
-    try expectEqual(state.projectKeychainCreations.count, 1, "physical keychain creation count")
-    try expectEqual(state.projectPasswords.count, 1, "project password storage count")
-    try expectEqual(state.projectPasswords[0].service, "agent-keychain.project.demo.keychain-password", "project password service")
+    try expectEqual(state.roleKeychainCreations.count, 0, "init should not create role keychains before roles exist")
+    try expectEqual(state.rolePasswords.count, 0, "init should not store role keychain passwords before roles exist")
 
     let status = try runAgentKeychain(["status"], workingDirectory: physical.url, stateURL: physicalStateURL)
     try expectEqual(status.exitCode, 0, "status exit code")
-    try expectContains(status.stdout, "Project keychain: configured", "project keychain status")
+    try expectNotContains(status.stdout, "Project keychain:", "status should not report legacy project keychain")
 
     let path = try runAgentKeychain(["config", "path"], workingDirectory: physical.url, stateURL: physicalStateURL)
     try expectEqual(path.stdout, configURL(projectRoot: physical.url).path + "\n", "config path stdout")
@@ -238,12 +235,24 @@ func testConfigTrustAndCommandLifecycle() throws {
     let stateURL = temp.url.appendingPathComponent("state.json")
     try initializeProject(temp, stateURL: stateURL)
 
+    let set = try runAgentKeychain([
+        "secret", "set", "github-readonly",
+        "--role", "regular",
+        "--reason", "Add GitHub token for integrity check",
+    ], workingDirectory: temp.url, stateURL: stateURL, secret: "ghp_black_box_integrity")
+    try expectEqual(set.exitCode, 0, "integrity run fixture secret")
+
     var config = try readConfig(projectRoot: temp.url)
     config.roles["regular"]?.description = "Trusted black-box manual edit"
     try writeConfig(config, projectRoot: temp.url)
 
     let rejected = try runAgentKeychain(
-        ["run", "--role", "regular", "--", "agent-command"],
+        [
+            "run",
+            "--role", "regular",
+            "--secret", "GITHUB_TOKEN=github-readonly",
+            "--", "agent-command"
+        ],
         workingDirectory: temp.url,
         stateURL: stateURL
     )
@@ -252,7 +261,12 @@ func testConfigTrustAndCommandLifecycle() throws {
 
     try trustEditedConfig(projectRoot: temp.url, stateURL: stateURL, reason: "Accept black-box manual edit")
     let accepted = try runAgentKeychain(
-        ["run", "--role", "regular", "--", "agent-command"],
+        [
+            "run",
+            "--role", "regular",
+            "--secret", "GITHUB_TOKEN=github-readonly",
+            "--", "agent-command"
+        ],
         workingDirectory: temp.url,
         stateURL: stateURL
     )
@@ -295,18 +309,34 @@ func testRoleManagementCommands() throws {
 
     let show = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
     try expectContains(show.stdout, "\"description\":\"Analysis work\"", "role show")
+    try expectNotContains(show.stdout, "requireReason", "role show should not include removed reason policy")
     try expectNotContains(show.stdout, "allowSecretExport", "role show should not include removed secret export policy")
 
     let update = try runAgentKeychain([
         "role", "update", "analyst",
-        "--reason", "Tighten analyst policy",
-        "--require-reason",
+        "--reason", "Update analyst description",
+        "--description", "Analysis work updated",
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
     let updated = try runAgentKeychain(["role", "show", "analyst"], workingDirectory: temp.url, stateURL: stateURL)
-    try expectContains(updated.stdout, "\"requireReason\":true", "updated role requires reason")
+    try expectContains(updated.stdout, "\"description\":\"Analysis work updated\"", "updated role description")
+    try expectNotContains(updated.stdout, "requireReason", "updated role should not include removed reason policy")
     try expectNotContains(updated.stdout, "allowSecretExport", "updated role should not include removed secret export policy")
+
+    let missingDescription = try runAgentKeychain([
+        "role", "update", "analyst",
+        "--reason", "No-op role update",
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(missingDescription.exitCode, 2, "role update without description exit code")
+    try expectContains(missingDescription.stderr, "role update requires --description", "role update without description error")
+
+    let removedRequireReasonFlag = try runAgentKeychain([
+        "role", "update", "analyst",
+        "--reason", "Try removed require reason flag",
+        "--require-reason",
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(removedRequireReasonFlag.exitCode, 2, "removed role update require reason flag exit code")
 
     let removedCreateFlag = try runAgentKeychain([
         "role", "create", "auditor",
@@ -335,7 +365,7 @@ func testRoleManagementCommands() throws {
 
     let state = try readState(stateURL)
     try expect(state.authorizations.contains("Create analyst role"), "role create should authorize")
-    try expect(state.authorizations.contains("Tighten analyst policy"), "role update should authorize")
+    try expect(state.authorizations.contains("Update analyst description"), "role update should authorize")
     try expect(state.authorizations.contains("Remove analyst role"), "role delete should authorize")
 }
 
@@ -373,15 +403,8 @@ func testSecretCommandsAndPolicies() throws {
     try expectEqual(rejectedRole.exitCode, 2, "explicit role secret get exit code")
     try expectContains(rejectedRole.stderr, "secret get infers the role from secret ownership; omit --role", "explicit role secret stderr")
 
-    let missingReason = try runAgentKeychain([
-        "secret", "get", "mercury-api-key",
-    ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(missingReason.exitCode, 2, "finance missing reason exit code")
-    try expectContains(missingReason.stderr, "Role finance requires --reason", "finance missing reason stderr")
-
     let financeGet = try runAgentKeychain([
         "secret", "get", "mercury-api-key",
-        "--reason", "Review approved invoices"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(financeGet.exitCode, 0, "finance secret get exit code")
     try expectEqual(financeGet.stdout, "mercury_black_box\n", "finance secret get stdout")
@@ -408,7 +431,6 @@ func testSecretCommandsAndPolicies() throws {
     try expectContains(audit, "\"event\":\"secret_set\"", "secret set audit")
     try expectContains(audit, "\"event\":\"secret_read\"", "secret read audit")
     try expectContains(audit, "\"event\":\"secret_delete\"", "secret delete audit")
-    try expectContains(audit, "\"event\":\"policy_rejection\"", "secret policy rejection audit")
     try expectNotContains(audit, "\"event\":\"raw_secret_stdout_override\"", "raw override audit should be removed")
     try expectNotContains(audit, "ghp_black_box", "audit should not contain regular secret")
     try expectNotContains(audit, "mercury_black_box", "audit should not contain finance secret")
@@ -587,7 +609,7 @@ func testBrowserCommandsAndIsolatedProfileLaunch() throws {
     try expectNotContains(audit, "about:blank", "audit should not contain raw Chrome URL args")
 }
 
-func testRunCommandSecretInjectionAndManagedBrowser() throws {
+func testRunCommandSecretInjectionAndRemovedResourceOptions() throws {
     let temp = try TemporaryDirectory()
     let stateURL = temp.url.appendingPathComponent("state.json")
     try initializeProject(temp, stateURL: stateURL)
@@ -627,6 +649,8 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
         "--", "agent-command"
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(financeRun.exitCode, 0, "finance env run")
+    state = try readState(stateURL)
+    let commandCountBeforeInvalidRuns = state.commandInvocations.count
 
     let removedFlag = try runAgentKeychain([
         "run",
@@ -638,38 +662,45 @@ func testRunCommandSecretInjectionAndManagedBrowser() throws {
     ], workingDirectory: temp.url, stateURL: stateURL)
     try expectEqual(removedFlag.exitCode, 2, "removed privileged env flag")
 
-    let createVolume = try runAgentKeychain([
-        "volume", "create", "FinanceBrowser",
-        "--role", "finance",
-        "--size", "20g",
-        "--reason", "Create finance browser volume",
-    ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(createVolume.exitCode, 0, "run browser fixture volume")
-    let mountpoint = temp.url.appendingPathComponent("mounts/FinanceBrowser").path
-    try setVolumeMountpoint(projectRoot: temp.url, stateURL: stateURL, volumeName: "FinanceBrowser", mountpoint: mountpoint)
-
-    let createBrowser = try runAgentKeychain([
-        "browser", "create", "Mercury",
-        "--role", "finance",
-        "--volume", "FinanceBrowser",
-        "--reason", "Create Mercury browser profile"
-    ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(createBrowser.exitCode, 0, "run browser fixture browser")
-
-    let runWithBrowser = try runAgentKeychain([
+    let volumeFlag = try runAgentKeychain([
         "run",
         "--role", "finance",
-        "--reason", "Review approved payments",
+        "--volume", "FinanceBrowser",
+        "--", "agent-command"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(volumeFlag.exitCode, 2, "removed run volume flag")
+    try expectContains(volumeFlag.stderr, "Unexpected run argument: --volume", "removed run volume stderr")
+
+    let browserFlag = try runAgentKeychain([
+        "run",
+        "--role", "finance",
         "--browser", "Mercury",
+        "--", "agent-command"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(browserFlag.exitCode, 2, "removed run browser flag")
+    try expectContains(browserFlag.stderr, "Unexpected run argument: --browser", "removed run browser stderr")
+
+    let detachFlag = try runAgentKeychain([
+        "run",
+        "--role", "finance",
         "--detach-on-exit",
         "--", "agent-command"
     ], workingDirectory: temp.url, stateURL: stateURL)
-    try expectEqual(runWithBrowser.exitCode, 0, "run with browser")
+    try expectEqual(detachFlag.exitCode, 2, "removed run detach flag")
+    try expectContains(detachFlag.stderr, "Unexpected run argument: --detach-on-exit", "removed run detach stderr")
+
+    let zeroSecret = try runAgentKeychain([
+        "run",
+        "--role", "finance",
+        "--", "agent-command"
+    ], workingDirectory: temp.url, stateURL: stateURL)
+    try expectEqual(zeroSecret.exitCode, 2, "run zero secret")
+    try expectContains(zeroSecret.stderr, "run requires at least one --secret", "run zero secret stderr")
 
     state = try readState(stateURL)
-    try expectEqual(state.browserLaunches.last?.userDataDir, mountpoint + "/ChromeProfiles/Mercury", "run browser launch")
-    try expectEqual(state.commandInvocations.last?.command, ["agent-command"], "run browser child command")
-    try expect(!state.detachedMountpoints.contains(mountpoint), "run detach-on-exit should leave browser volume mounted")
+    try expectEqual(state.commandInvocations.count, commandCountBeforeInvalidRuns, "invalid run options must not invoke commands")
+    try expectEqual(state.browserLaunches.count, 0, "run must not launch browsers")
+    try expectEqual(state.attachedImages.count, 0, "run must not attach volumes")
 
     let audit = try readAudit(projectRoot: temp.url)
     try expectNotContains(audit, "\"event\":\"privileged_secret_export_override\"", "privileged secret export audit should be removed")
@@ -687,7 +718,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testSecretCommandsAndPolicies", testSecretCommandsAndPolicies),
     ("testVolumeCommandsAndPolicies", testVolumeCommandsAndPolicies),
     ("testBrowserCommandsAndIsolatedProfileLaunch", testBrowserCommandsAndIsolatedProfileLaunch),
-    ("testRunCommandSecretInjectionAndManagedBrowser", testRunCommandSecretInjectionAndManagedBrowser)
+    ("testRunCommandSecretInjectionAndRemovedResourceOptions", testRunCommandSecretInjectionAndRemovedResourceOptions)
 ]
 
 var failures = 0

@@ -2,7 +2,6 @@ import Foundation
 
 private struct ResolvedBrowserProfile {
     let config: ProjectConfig
-    let role: RoleConfig
     let browser: BrowserMetadata
     let volume: VolumeMetadata
     let userDataDir: String
@@ -200,19 +199,10 @@ extension AgentKeychainCLI {
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
         let browser = try requireBrowser(config: config, name: name)
         let roleName = browser.role
-        let role = try PolicyEngine.requireRole(config, roleName)
-        try requireReasonIfNeeded(
-            config: config,
-            roleName: roleName,
-            role: role,
-            reason: reason,
-            resource: name,
-            audit: audit,
-            runID: runID
-        )
+        _ = try PolicyEngine.requireRole(config, roleName)
         let volume = try requireVolume(config: config, name: browser.volume, roleName: roleName, reason: reason, auditURL: store.auditURL)
         let userDataDir = try browserUserDataDir(mountpoint: volume.mountpoint, profilePath: browser.profilePath)
-        return ResolvedBrowserProfile(config: config, role: role, browser: browser, volume: volume, userDataDir: userDataDir)
+        return ResolvedBrowserProfile(config: config, browser: browser, volume: volume, userDataDir: userDataDir)
     }
 
     private func mountBrowserVolumeIfNeeded(

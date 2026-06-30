@@ -32,7 +32,6 @@ extension AgentKeychainCLI {
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-reason"],
             valueOptions: ["--reason", "--description"]
         )
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
@@ -73,7 +72,6 @@ extension AgentKeychainCLI {
         try createRoleKeychain(roleKeychain)
         config.roles[name] = RoleConfig(
             description: description,
-            requireReason: options.hasFlag("--require-reason"),
             keychain: roleKeychain
         )
         let newHash = try config.canonicalHash()
@@ -168,13 +166,15 @@ extension AgentKeychainCLI {
 
     private func roleUpdate(arguments: [String], workingDirectory: URL) throws -> CommandResult {
         guard let name = arguments.first, !name.hasPrefix("--") else {
-            throw AgentKeychainError.invalidArguments("Usage: agent-keychain role update NAME --reason TEXT [options]")
+            throw AgentKeychainError.invalidArguments("Usage: agent-keychain role update NAME --reason TEXT --description TEXT")
         }
         let options = try ParsedOptions(
             arguments: Array(arguments.dropFirst()),
-            booleanFlags: ["--require-reason", "--no-require-reason"],
             valueOptions: ["--reason", "--description"]
         )
+        guard options.value(for: "--description") != nil else {
+            throw AgentKeychainError.invalidArguments("role update requires --description")
+        }
         let reason = try PolicyEngine.requireMutationReason(options.value(for: "--reason"))
         try dependencies.userPresenceAuthorizer.authorize(
             reason: reason,
@@ -189,12 +189,6 @@ extension AgentKeychainCLI {
         let oldHash = try config.canonicalHash()
         if let description = options.value(for: "--description") {
             role.description = description
-        }
-        if options.hasFlag("--require-reason") {
-            role.requireReason = true
-        }
-        if options.hasFlag("--no-require-reason") {
-            role.requireReason = false
         }
         config.roles[name] = role
         let newHash = try config.canonicalHash()
@@ -257,10 +251,8 @@ extension AgentKeychainCLI {
         let store = ConfigStore(projectRoot: workingDirectory)
         let config = try loadTrustedConfig(store: store, reason: reason)
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
-        let role = try PolicyEngine.requireRole(config, name)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
-        try requireReasonIfNeeded(config: config, roleName: name, role: role, reason: reason, resource: nil, audit: audit, runID: runID)
         _ = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: name, resource: nil, reason: reason)
         return CommandResult(exitCode: 0, stdout: "Unlocked role \(name)\n")
     }

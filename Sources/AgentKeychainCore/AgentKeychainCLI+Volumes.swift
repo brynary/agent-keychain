@@ -101,18 +101,9 @@ extension AgentKeychainCLI {
         try configureKeychainContext(config: config, workingDirectory: workingDirectory)
         let metadata = try requireVolume(config: config, name: name)
         let roleName = metadata.role
-        let role = try PolicyEngine.requireRole(config, roleName)
+        _ = try PolicyEngine.requireRole(config, roleName)
         let audit = AuditLog(url: store.auditURL)
         let runID = dependencies.runIDFactory.makeRunID(date: dependencies.clock.now())
-        try requireReasonIfNeeded(
-            config: config,
-            roleName: roleName,
-            role: role,
-            reason: reason,
-            resource: name,
-            audit: audit,
-            runID: runID
-        )
         try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: config.project.name, event: "volume_unlock_requested", result: "success", role: roleName, resource: name, reason: reason))
         let password = try readKeychainItem(
             service: metadata.keychainService,

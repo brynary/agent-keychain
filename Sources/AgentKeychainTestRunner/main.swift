@@ -39,16 +39,6 @@ final class TemporaryDirectory {
 }
 
 final class RecordingKeychainStore: KeychainStoring {
-    struct ProjectKeychainCreation {
-        let path: String
-        let password: String
-    }
-
-    struct ProjectPassword {
-        let service: String
-        let password: String
-    }
-
     struct RoleKeychainCreation {
         let path: String
         let password: String
@@ -66,17 +56,9 @@ final class RecordingKeychainStore: KeychainStoring {
         let roleKeychainPath: String?
     }
 
-    struct GenericPasswordAccessRepair: Equatable {
-        let service: String
-        let roleKeychainPath: String?
-    }
-
-    var projectKeychainCreations: [ProjectKeychainCreation] = []
-    var projectPasswords: [ProjectPassword] = []
     var roleKeychainCreations: [RoleKeychainCreation] = []
     var rolePasswords: [RolePassword] = []
     var genericPasswordWrites: [GenericPasswordWrite] = []
-    var genericPasswordAccessRepairs: [GenericPasswordAccessRepair] = []
     var roleUnlocks: [String] = []
     var roleLocks: [String] = []
     var roleUnlockStatusChecks: [String] = []
@@ -85,39 +67,7 @@ final class RecordingKeychainStore: KeychainStoring {
     var deletedServices: [String] = []
     var failingReadServices: Set<String> = []
 
-    func createProjectKeychain(path: String, password: String) throws {
-        projectKeychainCreations.append(ProjectKeychainCreation(path: path, password: password))
-    }
-
     func useProject(config: ProjectConfig, projectRoot: URL) throws {}
-
-    func storeProjectKeychainPassword(service: String, password: String) throws {
-        projectPasswords.append(ProjectPassword(service: service, password: password))
-    }
-
-    func storeGenericPassword(service: String, value: String) throws {
-        genericPasswordWrites.append(GenericPasswordWrite(service: service, value: value, roleKeychainPath: nil))
-        secrets[service] = value
-    }
-
-    func readGenericPassword(service: String) throws -> String {
-        if failingReadServices.contains(service) {
-            throw AgentKeychainError.filesystem("simulated keychain read failure")
-        }
-        guard let value = secrets[service] else {
-            throw TestFailure(description: "missing keychain value for \(service)")
-        }
-        return value
-    }
-
-    func deleteGenericPassword(service: String) throws {
-        deletedServices.append(service)
-        secrets.removeValue(forKey: service)
-    }
-
-    func repairGenericPasswordAccess(service: String) throws {
-        genericPasswordAccessRepairs.append(GenericPasswordAccessRepair(service: service, roleKeychainPath: nil))
-    }
 
     func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
         roleKeychainCreations.append(RoleKeychainCreation(path: path, password: password, ttlSeconds: ttlSeconds))
@@ -148,15 +98,18 @@ final class RecordingKeychainStore: KeychainStoring {
     }
 
     func readGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws -> String {
-        try readGenericPassword(service: service)
+        if failingReadServices.contains(service) {
+            throw AgentKeychainError.filesystem("simulated keychain read failure")
+        }
+        guard let value = secrets[service] else {
+            throw TestFailure(description: "missing keychain value for \(service)")
+        }
+        return value
     }
 
     func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
-        try deleteGenericPassword(service: service)
-    }
-
-    func repairGenericPasswordAccess(service: String, roleKeychain: RoleKeychainConfig) throws {
-        genericPasswordAccessRepairs.append(GenericPasswordAccessRepair(service: service, roleKeychainPath: roleKeychain.path))
+        deletedServices.append(service)
+        secrets.removeValue(forKey: service)
     }
 }
 
@@ -320,7 +273,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "role", "create", "workspace-admin",
         "--reason", "Create workspace admin example role",
         "--description", "Identity and workspace administration",
-        "--require-reason",
     ], workingDirectory: workingDirectory)
     try expectEqual(workspaceAdmin.exitCode, 0, "workspace-admin role fixture")
 
@@ -328,7 +280,6 @@ func createExampleRolesFixture(cli: AgentKeychainCLI, workingDirectory: URL) thr
         "role", "create", "finance",
         "--reason", "Create finance example role",
         "--description", "Money movement and financial administration",
-        "--require-reason",
     ], workingDirectory: workingDirectory)
     try expectEqual(finance.exitCode, 0, "finance role fixture")
 }
@@ -382,17 +333,10 @@ func testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement
     )
 }
 
-func testProjectKeychainUnlockPolicyUsesGeneratedPassword() throws {
-    try expect(
-        ProjectKeychainUnlockPolicy.useProvidedPassword,
-        "project keychain unlock should use the generated password instead of prompting the user"
-    )
-}
-
 func testCustomKeychainItemAccessPolicyAllowsExecutableIndependentReads() throws {
     try expect(
         CustomKeychainItemAccessPolicy.allowsAnyApplicationAfterUnlock,
-        "project and role keychain items should not be tied to the executable path that created them"
+        "role keychain items should not be tied to the executable path that created them"
     )
 }
 
@@ -467,15 +411,11 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
 
     let config = try JSONDecoder().decode(ProjectConfig.self, from: configData)
     try expectEqual(config.project.name, "demo", "project name")
-    try expectEqual(config.project.keychainPath, ".agent-keychain/keychains/project.keychain-db", "keychain path")
-    try expectEqual(config.project.keychainPasswordService, "agent-keychain.project.demo.keychain-password", "keychain password service")
-
-    try expectEqual(keychain.projectKeychainCreations.count, 1, "created project keychain count")
-    try expectEqual(keychain.projectKeychainCreations[0].path, projectDir.appendingPathComponent("keychains/project.keychain-db").path, "created project keychain path")
-    try expectEqual(keychain.projectKeychainCreations[0].password, "generated-project-keychain-password", "created project keychain password")
-    try expectEqual(keychain.projectPasswords.count, 1, "stored project keychain password count")
-    try expectEqual(keychain.projectPasswords[0].service, "agent-keychain.project.demo.keychain-password", "stored project password service")
-    try expectEqual(keychain.projectPasswords[0].password, "generated-project-keychain-password", "stored generated project password")
+    try expect(!configText.contains("keychainPath"), "config must not contain legacy project keychain path")
+    try expect(!configText.contains("keychainPasswordService"), "config must not contain legacy project keychain password service")
+    try expect(!FileManager.default.fileExists(atPath: projectDir.appendingPathComponent("keychains/project.keychain-db").path), "init must not create a legacy project keychain")
+    try expectEqual(keychain.roleKeychainCreations.count, 0, "init must not create role keychains before roles exist")
+    try expectEqual(keychain.rolePasswords.count, 0, "init must not store role keychain passwords before roles exist")
 
     let integrityURL = projectDir.appendingPathComponent("config.integrity.json")
     let integrity = try JSONDecoder().decode(ConfigIntegrity.self, from: Data(contentsOf: integrityURL))
@@ -491,7 +431,7 @@ func testInitCreatesProjectLayoutConfigIntegrityAndAudit() throws {
     try expect(auditText.contains("\"entry_hash\""), "audit should include hash chain entry hash")
 }
 
-func testRoleCreateListShowAndReasonRequirement() throws {
+func testRoleCreateListShow() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, createExampleRoles: false)
@@ -504,7 +444,6 @@ func testRoleCreateListShowAndReasonRequirement() throws {
         "role", "create", "analyst",
         "--reason", "Create analyst role for reporting workflows",
         "--description", "Reporting and read-only analytics",
-        "--require-reason",
     ], workingDirectory: temp.url)
 
     try expectEqual(created.exitCode, 0, "role create exit code")
@@ -514,10 +453,10 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     let config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role in config")
     try expectEqual(analyst.description, "Reporting and read-only analytics", "analyst description")
-    try expectEqual(analyst.requireReason, true, "analyst reason")
-    try expectEqual(analyst.keychain?.path, ".agent-keychain/keychains/roles/analyst.keychain-db", "analyst keychain path")
-    try expectEqual(analyst.keychain?.passwordService, "agent-keychain.project.demo.role.analyst.keychain-password", "analyst keychain password service")
-    try expectEqual(analyst.keychain?.ttlSeconds, 300, "analyst keychain ttl")
+    let analystKeychain = try expectUnwrapped(analyst.keychain, "expected analyst role keychain")
+    try expectEqual(analystKeychain.path, ".agent-keychain/keychains/roles/analyst.keychain-db", "analyst keychain path")
+    try expectEqual(analystKeychain.passwordService, "agent-keychain.project.demo.role.analyst.keychain-password", "analyst keychain password service")
+    try expectEqual(analystKeychain.ttlSeconds, 300, "analyst keychain ttl")
     try expect(
         keychain.roleKeychainCreations.contains { $0.path == ".agent-keychain/keychains/roles/analyst.keychain-db" && $0.ttlSeconds == 300 },
         "role create should create role keychain"
@@ -535,9 +474,15 @@ func testRoleCreateListShowAndReasonRequirement() throws {
     try expectEqual(show.exitCode, 0, "role show exit code")
     try expectEqual(
         show.stdout,
-        "{\"description\":\"Reporting and read-only analytics\",\"keychain\":{\"passwordService\":\"agent-keychain.project.demo.role.analyst.keychain-password\",\"path\":\".agent-keychain/keychains/roles/analyst.keychain-db\",\"ttlSeconds\":300},\"requireReason\":true}\n",
+        "{\"description\":\"Reporting and read-only analytics\",\"keychain\":{\"passwordService\":\"agent-keychain.project.demo.role.analyst.keychain-password\",\"path\":\".agent-keychain/keychains/roles/analyst.keychain-db\",\"ttlSeconds\":300}}\n",
         "role show JSON"
     )
+    let removedReasonFlag = cli.run([
+        "role", "create", "auditor",
+        "--reason", "Create auditor role",
+        "--require-reason",
+    ], workingDirectory: temp.url)
+    try expectEqual(removedReasonFlag.exitCode, 2, "removed role create require reason flag exit code")
     let removedFlag = cli.run([
         "role", "create", "auditor",
         "--reason", "Create auditor role",
@@ -565,11 +510,18 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     ], workingDirectory: temp.url)
     try expectEqual(create.exitCode, 0, "role update fixture create")
 
+    let missingDescription = cli.run([
+        "role", "update", "analyst",
+        "--reason", "No-op role update",
+    ], workingDirectory: temp.url)
+    try expectEqual(missingDescription.exitCode, 2, "role update without description exit code")
+    try expect(missingDescription.stderr.contains("role update requires --description"), "role update without description error")
+    try expect(!authorizer.reasons.contains("No-op role update"), "role update without description should not authorize")
+
     let update = cli.run([
         "role", "update", "analyst",
-        "--reason", "Tighten analyst role policy",
+        "--reason", "Update analyst role description",
         "--description", "Read-only reporting",
-        "--require-reason",
     ], workingDirectory: temp.url)
     try expectEqual(update.exitCode, 0, "role update exit code")
 
@@ -577,7 +529,19 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     var config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
     let analyst = try expectUnwrapped(config.roles["analyst"], "expected analyst role after update")
     try expectEqual(analyst.description, "Read-only reporting", "updated role description")
-    try expectEqual(analyst.requireReason, true, "updated require reason")
+    let removedRequireReasonFlag = cli.run([
+        "role", "update", "analyst",
+        "--reason", "Try removed require reason flag",
+        "--require-reason",
+    ], workingDirectory: temp.url)
+    try expectEqual(removedRequireReasonFlag.exitCode, 2, "removed require reason update flag exit code")
+
+    let removedNoRequireReasonFlag = cli.run([
+        "role", "update", "analyst",
+        "--reason", "Try removed no require reason flag",
+        "--no-require-reason",
+    ], workingDirectory: temp.url)
+    try expectEqual(removedNoRequireReasonFlag.exitCode, 2, "removed no require reason update flag exit code")
 
     let removedDenyFlag = cli.run([
         "role", "update", "analyst",
@@ -621,7 +585,7 @@ func testRoleUpdateAndDeleteMutatePolicyWithAudit() throws {
     try expectEqual(delete.exitCode, 0, "role delete exit code")
     config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
     try expect(config.roles["analyst"] == nil, "deleted role should be removed")
-    try expect(authorizer.reasons.contains("Tighten analyst role policy"), "role update should require user presence")
+    try expect(authorizer.reasons.contains("Update analyst role description"), "role update should require user presence")
     try expect(authorizer.reasons.contains("Remove unused analyst role"), "role delete should require user presence")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
@@ -848,86 +812,24 @@ func testSecretGetPromptsAgainAfterRoleUnlockTTLExpires() throws {
     try expect(keychain.roleLocks.contains("regular"), "expired role should be locked before re-unlock")
 }
 
-func testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent() throws {
+func testRemovedConfigMigrationAndRepairCommandsAreRejected() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
-    let prompt = QueueSecretPrompt(["ghp_regular_secret"])
-    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, prompt: prompt)
+    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain)
 
-    let set = cli.run([
-        "secret", "set", "github-readonly",
-        "--role", "regular",
-        "--reason", "Add GitHub token",
-    ], workingDirectory: temp.url)
-    try expectEqual(set.exitCode, 0, "migration fixture secret set")
-
-    let configURL = temp.url.appendingPathComponent(".agent-keychain/config.json")
-    var config = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
-    for roleName in config.roles.keys {
-        config.roles[roleName]?.keychain = nil
-    }
-    try config.canonicalData().write(to: configURL)
-    let trust = cli.run([
-        "config", "trust-current",
-        "--reason", "Trust legacy role config fixture"
-    ], workingDirectory: temp.url)
-    try expectEqual(trust.exitCode, 0, "trust legacy config fixture")
-
-    let creationsBeforeMigration = keychain.roleKeychainCreations.count
     let migrate = cli.run([
         "config", "migrate-role-keychains",
         "--reason", "Migrate legacy role keychains"
     ], workingDirectory: temp.url)
-    try expectEqual(migrate.exitCode, 0, "role keychain migration exit code")
-    try expect(migrate.stdout.contains("Migrated 3 role keychains"), "migration stdout: \(migrate.stdout)")
-    try expectEqual(keychain.roleKeychainCreations.count, creationsBeforeMigration + 3, "migration should create missing role keychains")
+    try expectEqual(migrate.exitCode, 2, "removed role keychain migration exit code")
+    try expect(migrate.stderr.contains("Unknown config command: migrate-role-keychains"), "removed migration message: \(migrate.stderr)")
 
-    let migratedConfig = try JSONDecoder().decode(ProjectConfig.self, from: Data(contentsOf: configURL))
-    try expectEqual(migratedConfig.roles["regular"]?.keychain?.ttlSeconds, 300, "migrated regular ttl")
-    try expectEqual(migratedConfig.roles["finance"]?.keychain?.passwordService, "agent-keychain.project.demo.role.finance.keychain-password", "migrated finance password service")
-    let integrity = try JSONDecoder().decode(ConfigIntegrity.self, from: Data(contentsOf: temp.url.appendingPathComponent(".agent-keychain/config.integrity.json")))
-    try expectEqual(integrity.configHash, try migratedConfig.canonicalHash(), "migration should update config integrity")
-
-    let second = cli.run([
-        "config", "migrate-role-keychains",
-        "--reason", "Check idempotent migration"
-    ], workingDirectory: temp.url)
-    try expectEqual(second.exitCode, 0, "second migration exit code")
-    try expectEqual(second.stdout, "Role keychains already migrated\n", "second migration stdout")
-    try expectEqual(keychain.roleKeychainCreations.count, creationsBeforeMigration + 3, "second migration should not create role keychains")
-}
-
-func testConfigRepairKeychainAccessRewritesProjectAndRoleItems() throws {
-    let temp = try TemporaryDirectory()
-    let keychain = RecordingKeychainStore()
-    let prompt = QueueSecretPrompt(["ghp_regular_secret"])
-    let cli = try makeInitializedCLI(at: temp.url, keychain: keychain, prompt: prompt)
-
-    let set = cli.run([
-        "secret", "set", "github-readonly",
-        "--role", "regular",
-        "--reason", "Add GitHub token",
-    ], workingDirectory: temp.url)
-    try expectEqual(set.exitCode, 0, "repair fixture secret set")
-
-    keychain.genericPasswordWrites.removeAll()
-    keychain.genericPasswordAccessRepairs.removeAll()
     let repair = cli.run([
         "config", "repair-keychain-access",
         "--reason", "Repair executable-bound keychain ACLs"
     ], workingDirectory: temp.url)
-
-    try expectEqual(repair.exitCode, 0, "repair keychain access exit code")
-    try expect(repair.stdout.contains("Repaired access for"), "repair stdout: \(repair.stdout)")
-    try expect(keychain.genericPasswordAccessRepairs.contains(RecordingKeychainStore.GenericPasswordAccessRepair(
-        service: "agent-keychain.role.regular.secret.github-readonly",
-        roleKeychainPath: ".agent-keychain/keychains/roles/regular.keychain-db"
-    )), "repair should rewrite regular secret in role keychain")
-    try expectEqual(keychain.genericPasswordWrites, [], "repair should not rewrite secret values")
-
-    let audit = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    try expect(audit.contains("\"event\":\"keychain_access_repaired\""), "repair audit")
-    try expect(!audit.contains("ghp_regular_secret"), "repair audit should not contain secret values")
+    try expectEqual(repair.exitCode, 2, "removed keychain repair exit code")
+    try expect(repair.stderr.contains("Unknown config command: repair-keychain-access"), "removed repair message: \(repair.stderr)")
 }
 
 func testUnfilteredDiscoveryOutputIncludesRoleContext() throws {
@@ -999,15 +901,8 @@ func testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag() throws {
         "explicit role rejection message: \(rejectedRole.stderr)"
     )
 
-    let missingReason = cli.run([
-        "secret", "get", "mercury-api-key",
-    ], workingDirectory: temp.url)
-    try expectEqual(missingReason.exitCode, 2, "missing reason exit code")
-    try expect(missingReason.stderr.contains("Role finance requires --reason"), "missing reason message: \(missingReason.stderr)")
-
     let allowed = cli.run([
         "secret", "get", "mercury-api-key",
-        "--reason", "Review approved contractor invoices"
     ], workingDirectory: temp.url)
     try expectEqual(allowed.exitCode, 0, "secret get exit code")
     try expectEqual(allowed.stdout, "mercury_secret\n", "secret get stdout")
@@ -1020,12 +915,11 @@ func testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag() throws {
     try expectEqual(removedFlag.exitCode, 2, "removed raw secret flag exit code")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    try expect(auditText.contains("\"event\":\"policy_rejection\""), "audit should include policy rejection")
     try expect(!auditText.contains("\"event\":\"raw_secret_stdout_override\""), "audit should not include removed raw secret override")
     try expect(!auditText.contains("mercury_secret"), "audit must not contain secret value")
 }
 
-func testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle() throws {
+func testPhysicalSecretReadAuditsRoleKeychainUnlockLifecycle() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["ghp_regular_secret"])
@@ -1036,7 +930,7 @@ func testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle() throws {
         "--role", "regular",
         "--reason", "Add GitHub token",
     ], workingDirectory: temp.url)
-    try expectEqual(set.exitCode, 0, "project keychain audit fixture secret set")
+    try expectEqual(set.exitCode, 0, "role keychain audit fixture secret set")
 
     let get = cli.run([
         "secret", "get", "github-readonly"
@@ -1048,7 +942,7 @@ func testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle() throws {
     try expect(auditText.contains("\"event\":\"role_keychain_unlock_succeeded\""), "audit should include role keychain unlock success")
 }
 
-func testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure() throws {
+func testPhysicalSecretReadAuditsRoleKeychainUnlockFailureAndCommandFailure() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["ghp_regular_secret"])
@@ -1059,13 +953,13 @@ func testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure()
         "--role", "regular",
         "--reason", "Add GitHub token",
     ], workingDirectory: temp.url)
-    try expectEqual(set.exitCode, 0, "project keychain failure fixture secret set")
+    try expectEqual(set.exitCode, 0, "role keychain failure fixture secret set")
 
     keychain.failingReadServices.insert("agent-keychain.role.regular.secret.github-readonly")
     let get = cli.run([
         "secret", "get", "github-readonly"
     ], workingDirectory: temp.url)
-    try expectEqual(get.exitCode, 1, "project keychain audit failed secret get")
+    try expectEqual(get.exitCode, 1, "role keychain audit failed secret get")
     try expect(get.stderr.contains("simulated keychain read failure"), "failed keychain read message: \(get.stderr)")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
@@ -1073,7 +967,7 @@ func testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure()
     try expect(auditText.contains("\"event\":\"command_failed\""), "audit should include command_failed for keychain failure")
 }
 
-func testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle() throws {
+func testPhysicalSecretSetAndDeleteAuditRoleKeychainUnlockLifecycle() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let prompt = QueueSecretPrompt(["ghp_regular_secret"])
@@ -1084,14 +978,14 @@ func testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle() throws 
         "--role", "regular",
         "--reason", "Add GitHub token",
     ], workingDirectory: temp.url)
-    try expectEqual(set.exitCode, 0, "project keychain write fixture secret set")
+    try expectEqual(set.exitCode, 0, "role keychain write fixture secret set")
 
     let delete = cli.run([
         "secret", "delete", "github-readonly",
         "--role", "regular",
         "--reason", "Remove GitHub token"
     ], workingDirectory: temp.url)
-    try expectEqual(delete.exitCode, 0, "project keychain delete fixture secret delete")
+    try expectEqual(delete.exitCode, 0, "role keychain delete fixture secret delete")
 
     let auditText = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
     try expect(auditText.contains("\"event\":\"role_keychain_unlock_requested\""), "set/delete should request role keychain unlock")
@@ -1142,23 +1036,8 @@ func testVolumeCreateUnlockLockStatusAndRolePolicy() throws {
     try expect(rejectedRole.stderr.contains("volume unlock infers the role from resource ownership; omit --role"), "explicit role volume message: \(rejectedRole.stderr)")
     try expectEqual(disk.attached.count, 0, "rejected unlock must not attach")
 
-    let auditBeforeMissingReason = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    let policyRejectionsBeforeMissingReason = occurrenceCount(in: auditBeforeMissingReason, of: "\"event\":\"policy_rejection\"")
-    let missingReason = cli.run([
-        "volume", "unlock", "FinanceBrowser"
-    ], workingDirectory: temp.url)
-    try expectEqual(missingReason.exitCode, 2, "finance volume missing reason exit code")
-    try expect(missingReason.stderr.contains("Role finance requires --reason"), "volume missing reason message: \(missingReason.stderr)")
-    let auditAfterMissingReason = try String(contentsOf: temp.url.appendingPathComponent(".agent-keychain/audit.jsonl"), encoding: .utf8)
-    try expectEqual(
-        occurrenceCount(in: auditAfterMissingReason, of: "\"event\":\"policy_rejection\""),
-        policyRejectionsBeforeMissingReason + 1,
-        "missing required reason should audit policy rejection"
-    )
-
     let unlock = cli.run([
         "volume", "unlock", "FinanceBrowser",
-        "--reason", "Review approved contractor invoices"
     ], workingDirectory: temp.url)
     try expectEqual(unlock.exitCode, 0, "volume unlock exit code")
     try expectEqual(disk.attached.count, 1, "volume attach count")
@@ -1419,12 +1298,6 @@ func testBrowserCreateOpenListAndRolePolicy() throws {
     try expect(rejectedRole.stderr.contains("browser open infers the role from resource ownership; omit --role"), "explicit role browser message: \(rejectedRole.stderr)")
     try expectEqual(browser.launches.count, 0, "rejected browser must not launch")
 
-    let missingReason = cli.run([
-        "browser", "open", "Mercury"
-    ], workingDirectory: temp.url)
-    try expectEqual(missingReason.exitCode, 2, "browser missing reason exit code")
-    try expect(missingReason.stderr.contains("Role finance requires --reason"), "browser missing reason message: \(missingReason.stderr)")
-
     let oldDetachFlag = cli.run([
         "browser", "open", "Mercury",
         "--reason", "Review payment status for approved invoices",
@@ -1436,7 +1309,6 @@ func testBrowserCreateOpenListAndRolePolicy() throws {
 
     let open = cli.run([
         "browser", "open", "Mercury",
-        "--reason", "Review payment status for approved invoices"
     ], workingDirectory: temp.url)
     try expectEqual(open.exitCode, 0, "browser open exit code")
     try expectEqual(disk.attached.count, 1, "browser should attach volume once")
@@ -1473,12 +1345,6 @@ func testBrowserPathMountsVolumeAndPrintsProfilePath() throws {
     ], workingDirectory: temp.url)
     try expectEqual(createBrowser.exitCode, 0, "browser path fixture browser")
 
-    let missingReason = cli.run([
-        "browser", "path", "Mercury"
-    ], workingDirectory: temp.url)
-    try expectEqual(missingReason.exitCode, 2, "browser path missing reason exit code")
-    try expect(missingReason.stderr.contains("Role finance requires --reason"), "browser path missing reason message: \(missingReason.stderr)")
-
     let rejectedRole = cli.run([
         "browser", "path", "Mercury",
         "--role", "regular"
@@ -1488,7 +1354,6 @@ func testBrowserPathMountsVolumeAndPrintsProfilePath() throws {
 
     let path = cli.run([
         "browser", "path", "Mercury",
-        "--reason", "Resolve Mercury profile path for login"
     ], workingDirectory: temp.url)
     try expectEqual(path.exitCode, 0, "browser path exit code")
     try expectEqual(path.stdout, "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury\n", "browser path stdout")
@@ -1666,7 +1531,7 @@ func testBrowserOpenRejectsProfilePathTraversal() throws {
     try expectEqual(browser.launches.count, 0, "unsafe profile path should not launch Chrome")
 }
 
-func testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted() throws {
+func testBrowserOpenLeavesBrowserVolumeMounted() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let disk = RecordingDiskImageStore()
@@ -1697,17 +1562,7 @@ func testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted() throws {
     try expectEqual(open.exitCode, 0, "privileged browser open exit code")
     try expectEqual(disk.detached, [], "browser open should leave privileged browser volume mounted")
 
-    disk.detached.removeAll()
-    disk.mounted.removeAll()
-    let run = cli.run([
-        "run",
-        "--role", "finance",
-        "--reason", "Review approved payments",
-        "--browser", "Mercury",
-        "--", "agent-command"
-    ], workingDirectory: temp.url)
-    try expectEqual(run.exitCode, 0, "privileged run exit code")
-    try expectEqual(disk.detached, [], "run should leave browser-backed volume mounted")
+    try expectEqual(runner.invocations.count, 0, "browser open should not invoke run command")
 }
 
 func testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage() throws {
@@ -1775,7 +1630,7 @@ func testStatusConfigPathProjectDiscoveryAndTrustCurrent() throws {
     let status = cli.run(["status"], workingDirectory: temp.url)
     try expectEqual(status.exitCode, 0, "status exit code")
     try expect(status.stdout.contains("Project: demo"), "status project: \(status.stdout)")
-    try expect(status.stdout.contains("Project keychain: configured"), "status keychain state: \(status.stdout)")
+    try expect(!status.stdout.contains("Project keychain:"), "status should not report legacy project keychain state: \(status.stdout)")
     try expect(status.stdout.contains("Roles: finance, regular, workspace-admin"), "status roles: \(status.stdout)")
 
     let nested = temp.url.appendingPathComponent("a/b/c", isDirectory: true)
@@ -2086,7 +1941,7 @@ func testUserPresenceAuthorizationFailureStillReportsProgress() throws {
     )
 }
 
-func testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted() throws {
+func testRunRejectsVolumeBrowserDetachAndZeroSecretInvocations() throws {
     let temp = try TemporaryDirectory()
     let keychain = RecordingKeychainStore()
     let disk = RecordingDiskImageStore()
@@ -2110,7 +1965,7 @@ func testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted() throws {
     ], workingDirectory: temp.url)
     try expectEqual(createBrowser.exitCode, 0, "run browser fixture browser")
 
-    let run = cli.run([
+    let browserRun = cli.run([
         "run",
         "--role", "finance",
         "--reason", "Review approved payments",
@@ -2118,12 +1973,37 @@ func testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted() throws {
         "--detach-on-exit",
         "--", "agent-command"
     ], workingDirectory: temp.url)
-    try expectEqual(run.exitCode, 0, "run browser exit code")
-    try expectEqual(browser.launches, [
-        RecordingBrowserLauncher.Launch(userDataDir: "/Volumes/AgentKeychain-demo-FinanceBrowser/ChromeProfiles/Mercury", additionalArguments: [])
-    ], "run browser launch")
-    try expectEqual(runner.invocations.count, 1, "run browser command count")
-    try expectEqual(disk.detached, [], "run should leave launched browser volume mounted")
+    try expectEqual(browserRun.exitCode, 2, "run browser flag exit code")
+    try expect(browserRun.stderr.contains("Unexpected run argument: --browser"), "run browser flag message: \(browserRun.stderr)")
+
+    let volumeRun = cli.run([
+        "run",
+        "--role", "finance",
+        "--volume", "FinanceBrowser",
+        "--", "agent-command"
+    ], workingDirectory: temp.url)
+    try expectEqual(volumeRun.exitCode, 2, "run volume flag exit code")
+    try expect(volumeRun.stderr.contains("Unexpected run argument: --volume"), "run volume flag message: \(volumeRun.stderr)")
+
+    let detachRun = cli.run([
+        "run",
+        "--role", "finance",
+        "--detach-on-exit",
+        "--", "agent-command"
+    ], workingDirectory: temp.url)
+    try expectEqual(detachRun.exitCode, 2, "run detach flag exit code")
+    try expect(detachRun.stderr.contains("Unexpected run argument: --detach-on-exit"), "run detach flag message: \(detachRun.stderr)")
+
+    let zeroSecretRun = cli.run([
+        "run",
+        "--role", "finance",
+        "--", "agent-command"
+    ], workingDirectory: temp.url)
+    try expectEqual(zeroSecretRun.exitCode, 2, "run zero secret exit code")
+    try expect(zeroSecretRun.stderr.contains("run requires at least one --secret"), "run zero secret message: \(zeroSecretRun.stderr)")
+    try expectEqual(browser.launches, [], "removed run browser flag must not launch browser")
+    try expectEqual(disk.attached.count, 0, "removed run volume flag must not attach volume")
+    try expectEqual(runner.invocations.count, 0, "invalid run invocations must not invoke command")
 }
 
 func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
@@ -2136,11 +2016,10 @@ func expectUnwrapped<T>(_ value: T?, _ message: String) throws -> T {
 let tests: [(String, () throws -> Void)] = [
     ("testCLITypeExists", testCLITypeExists),
     ("testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement", testLoginKeychainFallbackPolicyUsesUnsignedCLIPathOnlyForMissingEntitlement),
-    ("testProjectKeychainUnlockPolicyUsesGeneratedPassword", testProjectKeychainUnlockPolicyUsesGeneratedPassword),
     ("testCustomKeychainItemAccessPolicyAllowsExecutableIndependentReads", testCustomKeychainItemAccessPolicyAllowsExecutableIndependentReads),
     ("testTopLevelHelpIsUsefulAndDoesNotRequireProject", testTopLevelHelpIsUsefulAndDoesNotRequireProject),
     ("testInitCreatesProjectLayoutConfigIntegrityAndAudit", testInitCreatesProjectLayoutConfigIntegrityAndAudit),
-    ("testRoleCreateListShowAndReasonRequirement", testRoleCreateListShowAndReasonRequirement),
+    ("testRoleCreateListShow", testRoleCreateListShow),
     ("testRoleUpdateAndDeleteMutatePolicyWithAudit", testRoleUpdateAndDeleteMutatePolicyWithAudit),
     ("testConfigTamperRejectsPolicyMutationUntilTrusted", testConfigTamperRejectsPolicyMutationUntilTrusted),
     ("testHeldConfigLockBlocksPolicyMutation", testHeldConfigLockBlocksPolicyMutation),
@@ -2149,13 +2028,12 @@ let tests: [(String, () throws -> Void)] = [
     ("testSecretGetReusesRoleUnlockWithinTTL", testSecretGetReusesRoleUnlockWithinTTL),
     ("testSecretGetRequiresPromptWhenRoleSessionIsMissing", testSecretGetRequiresPromptWhenRoleSessionIsMissing),
     ("testSecretGetPromptsAgainAfterRoleUnlockTTLExpires", testSecretGetPromptsAgainAfterRoleUnlockTTLExpires),
-    ("testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent", testConfigMigrateRoleKeychainsAddsMissingRoleMetadataAndIsIdempotent),
-    ("testConfigRepairKeychainAccessRewritesProjectAndRoleItems", testConfigRepairKeychainAccessRewritesProjectAndRoleItems),
+    ("testRemovedConfigMigrationAndRepairCommandsAreRejected", testRemovedConfigMigrationAndRepairCommandsAreRejected),
     ("testUnfilteredDiscoveryOutputIncludesRoleContext", testUnfilteredDiscoveryOutputIncludesRoleContext),
     ("testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag", testSecretGetInfersRoleAndRejectsRemovedRawOutputFlag),
-    ("testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle", testPhysicalSecretReadAuditsProjectKeychainUnlockLifecycle),
-    ("testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure", testPhysicalSecretReadAuditsProjectKeychainUnlockFailureAndCommandFailure),
-    ("testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle", testPhysicalSecretSetAndDeleteAuditProjectKeychainUnlockLifecycle),
+    ("testPhysicalSecretReadAuditsRoleKeychainUnlockLifecycle", testPhysicalSecretReadAuditsRoleKeychainUnlockLifecycle),
+    ("testPhysicalSecretReadAuditsRoleKeychainUnlockFailureAndCommandFailure", testPhysicalSecretReadAuditsRoleKeychainUnlockFailureAndCommandFailure),
+    ("testPhysicalSecretSetAndDeleteAuditRoleKeychainUnlockLifecycle", testPhysicalSecretSetAndDeleteAuditRoleKeychainUnlockLifecycle),
     ("testVolumeCreateUnlockLockStatusAndRolePolicy", testVolumeCreateUnlockLockStatusAndRolePolicy),
     ("testVolumeLockSkipsDetachWhenMountpointBusy", testVolumeLockSkipsDetachWhenMountpointBusy),
     ("testVolumeLockAuditsDetachFailure", testVolumeLockAuditsDetachFailure),
@@ -2168,7 +2046,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testBrowserOpenPassesGuardedChromeArguments", testBrowserOpenPassesGuardedChromeArguments),
     ("testBrowserOpenRejectsUnsafeChromeArguments", testBrowserOpenRejectsUnsafeChromeArguments),
     ("testBrowserOpenRejectsProfilePathTraversal", testBrowserOpenRejectsProfilePathTraversal),
-    ("testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted", testPrivilegedBrowserAndRunLeaveBrowserVolumesMounted),
+    ("testBrowserOpenLeavesBrowserVolumeMounted", testBrowserOpenLeavesBrowserVolumeMounted),
     ("testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage", testBrowserDeleteAndVolumeDeleteCleanUpMetadataAndStorage),
     ("testStatusConfigPathProjectDiscoveryAndTrustCurrent", testStatusConfigPathProjectDiscoveryAndTrustCurrent),
     ("testStatusReportsVolumeMountedState", testStatusReportsVolumeMountedState),
@@ -2179,7 +2057,7 @@ let tests: [(String, () throws -> Void)] = [
     ("testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution", testUserPresenceAuthorizationReportsProgressWithoutStdoutPollution),
     ("testRunSecretExportDoesNotRequireOverrideProgress", testRunSecretExportDoesNotRequireOverrideProgress),
     ("testUserPresenceAuthorizationFailureStillReportsProgress", testUserPresenceAuthorizationFailureStillReportsProgress),
-    ("testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted", testRunBrowserLaunchesConfiguredBrowserAndLeavesVolumeMounted)
+    ("testRunRejectsVolumeBrowserDetachAndZeroSecretInvocations", testRunRejectsVolumeBrowserDetachAndZeroSecretInvocations)
 ]
 
 var failures = 0

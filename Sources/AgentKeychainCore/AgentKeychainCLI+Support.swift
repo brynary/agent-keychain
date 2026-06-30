@@ -74,10 +74,7 @@ extension AgentKeychainCLI {
 
     func requireRoleKeychain(config: ProjectConfig, roleName: String) throws -> RoleKeychainConfig {
         let role = try PolicyEngine.requireRole(config, roleName)
-        guard let keychain = role.keychain else {
-            throw AgentKeychainError.policy("Role \(roleName) has no role keychain. Run `agent-keychain config migrate-role-keychains --reason TEXT`.")
-        }
-        return keychain
+        return role.keychain
     }
 
     func makeRoleKeychainConfig(config: ProjectConfig, roleName: String) -> RoleKeychainConfig {
@@ -120,33 +117,6 @@ extension AgentKeychainCLI {
             throw AgentKeychainError.invalidArguments("Unknown browser profile: \(name)")
         }
         return browser
-    }
-
-    func requireReasonIfNeeded(
-        config: ProjectConfig,
-        roleName: String,
-        role: RoleConfig,
-        reason: String?,
-        resource: String?,
-        audit: AuditLog,
-        runID: String
-    ) throws {
-        guard role.requireReason && (reason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
-            return
-        }
-        let message = "Role \(roleName) requires --reason"
-        try audit.append(AuditEvent(
-            timestamp: dependencies.clock.now(),
-            runID: runID,
-            project: config.project.name,
-            event: "policy_rejection",
-            result: "denied",
-            role: roleName,
-            resource: resource,
-            reason: reason,
-            message: message
-        ))
-        throw AgentKeychainError.invalidArguments(message)
     }
 
     func browserUserDataDir(mountpoint: String, profilePath: String) throws -> String {
@@ -263,21 +233,6 @@ extension AgentKeychainCLI {
         }
     }
 
-    func detachVolumeIfNotBusy(project: String, runID: String, role: String, volumeName: String, metadata: VolumeMetadata, reason: String?, auditURL: URL) throws {
-        let audit = AuditLog(url: auditURL)
-        if try dependencies.diskImageStore.isBusy(mountpoint: metadata.mountpoint) {
-            try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: project, event: "volume_lock_skipped_because_busy", result: "skipped", role: role, resource: volumeName, reason: reason, message: "Mountpoint is busy"))
-            return
-        }
-        do {
-            try dependencies.diskImageStore.detach(mountpoint: metadata.mountpoint)
-            try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: project, event: "volume_lock_succeeded", result: "success", role: role, resource: volumeName, reason: reason))
-        } catch {
-            try audit.append(AuditEvent(timestamp: dependencies.clock.now(), runID: runID, project: project, event: "volume_lock_failed", result: "failed", role: role, resource: volumeName, reason: reason, message: "\(error)"))
-            throw error
-        }
-    }
-
     func storeKeychainItem(
         service: String,
         value: String,
@@ -285,18 +240,12 @@ extension AgentKeychainCLI {
         store: ConfigStore,
         audit: AuditLog,
         runID: String,
-        role: String?,
+        role: String,
         resource: String?,
         reason: String?
     ) throws {
-        if let role {
-            let roleKeychain = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: role, resource: resource, reason: reason)
-            try dependencies.keychainStore.storeGenericPassword(service: service, value: value, roleKeychain: roleKeychain)
-        } else {
-            try withProjectKeychainAudit(config: config, audit: audit, runID: runID, role: role, resource: resource, reason: reason) {
-                try dependencies.keychainStore.storeGenericPassword(service: service, value: value)
-            }
-        }
+        let roleKeychain = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: role, resource: resource, reason: reason)
+        try dependencies.keychainStore.storeGenericPassword(service: service, value: value, roleKeychain: roleKeychain)
     }
 
     func deleteKeychainItem(
@@ -305,18 +254,12 @@ extension AgentKeychainCLI {
         store: ConfigStore,
         audit: AuditLog,
         runID: String,
-        role: String?,
+        role: String,
         resource: String?,
         reason: String?
     ) throws {
-        if let role {
-            let roleKeychain = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: role, resource: resource, reason: reason)
-            try dependencies.keychainStore.deleteGenericPassword(service: service, roleKeychain: roleKeychain)
-        } else {
-            try withProjectKeychainAudit(config: config, audit: audit, runID: runID, role: role, resource: resource, reason: reason) {
-                try dependencies.keychainStore.deleteGenericPassword(service: service)
-            }
-        }
+        let roleKeychain = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: role, resource: resource, reason: reason)
+        try dependencies.keychainStore.deleteGenericPassword(service: service, roleKeychain: roleKeychain)
     }
 
     func readKeychainItem(
@@ -325,77 +268,13 @@ extension AgentKeychainCLI {
         store: ConfigStore,
         audit: AuditLog,
         runID: String,
-        role: String?,
+        role: String,
         resource: String?,
         reason: String?
     ) throws -> String {
-        if let role {
-            let roleKeychain = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: role, resource: resource, reason: reason)
-            do {
-                return try dependencies.keychainStore.readGenericPassword(service: service, roleKeychain: roleKeychain)
-            } catch {
-                try? audit.append(AuditEvent(
-                    timestamp: dependencies.clock.now(),
-                    runID: runID,
-                    project: config.project.name,
-                    event: "command_failed",
-                    result: "failed",
-                    role: role,
-                    resource: resource,
-                    reason: reason,
-                    message: "\(error)"
-                ))
-                throw error
-            }
-        }
-        return try withProjectKeychainAudit(config: config, audit: audit, runID: runID, role: role, resource: resource, reason: reason) {
-            try dependencies.keychainStore.readGenericPassword(service: service)
-        }
-    }
-
-    func withProjectKeychainAudit<T>(
-        config: ProjectConfig,
-        audit: AuditLog,
-        runID: String,
-        role: String?,
-        resource: String?,
-        reason: String?,
-        operation: () throws -> T
-    ) throws -> T {
-        try audit.append(AuditEvent(
-            timestamp: dependencies.clock.now(),
-            runID: runID,
-            project: config.project.name,
-            event: "project_keychain_unlock_requested",
-            result: "success",
-            role: role,
-            resource: resource,
-            reason: reason
-        ))
-
+        let roleKeychain = try ensureRoleKeychainUnlocked(config: config, store: store, audit: audit, runID: runID, roleName: role, resource: resource, reason: reason)
         do {
-            let value = try operation()
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "project_keychain_unlock_succeeded",
-                result: "success",
-                role: role,
-                resource: resource,
-                reason: reason
-            ))
-            try audit.append(AuditEvent(
-                timestamp: dependencies.clock.now(),
-                runID: runID,
-                project: config.project.name,
-                event: "project_keychain_locked",
-                result: "success",
-                role: role,
-                resource: resource,
-                reason: reason
-            ))
-            return value
+            return try dependencies.keychainStore.readGenericPassword(service: service, roleKeychain: roleKeychain)
         } catch {
             try? audit.append(AuditEvent(
                 timestamp: dependencies.clock.now(),
@@ -421,9 +300,5 @@ extension AgentKeychainCLI {
             ))
             throw error
         }
-    }
-
-    func defaultsToDetachOnExit(_ role: RoleConfig) -> Bool {
-        role.requireReason
     }
 }

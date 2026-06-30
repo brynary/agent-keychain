@@ -1,16 +1,6 @@
 #if DEBUG
 import Foundation
 
-public struct BlackBoxProjectKeychainCreation: Codable, Equatable, Sendable {
-    public var path: String
-    public var password: String
-}
-
-public struct BlackBoxProjectPassword: Codable, Equatable, Sendable {
-    public var service: String
-    public var password: String
-}
-
 public struct BlackBoxRoleKeychainCreation: Codable, Equatable, Sendable {
     public var path: String
     public var password: String
@@ -46,8 +36,6 @@ public struct BlackBoxCommandInvocation: Codable, Equatable, Sendable {
 }
 
 public struct BlackBoxTestState: Codable, Equatable, Sendable {
-    public var projectKeychainCreations: [BlackBoxProjectKeychainCreation]
-    public var projectPasswords: [BlackBoxProjectPassword]
     public var roleKeychainCreations: [BlackBoxRoleKeychainCreation]
     public var rolePasswords: [BlackBoxRolePassword]
     public var roleUnlocks: [String]
@@ -71,8 +59,6 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
     public var commandStderr: String
 
     public init(
-        projectKeychainCreations: [BlackBoxProjectKeychainCreation] = [],
-        projectPasswords: [BlackBoxProjectPassword] = [],
         roleKeychainCreations: [BlackBoxRoleKeychainCreation] = [],
         rolePasswords: [BlackBoxRolePassword] = [],
         roleUnlocks: [String] = [],
@@ -95,8 +81,6 @@ public struct BlackBoxTestState: Codable, Equatable, Sendable {
         commandStdout: String = "child stdout\n",
         commandStderr: String = ""
     ) {
-        self.projectKeychainCreations = projectKeychainCreations
-        self.projectPasswords = projectPasswords
         self.roleKeychainCreations = roleKeychainCreations
         self.rolePasswords = rolePasswords
         self.roleUnlocks = roleUnlocks
@@ -179,47 +163,7 @@ private final class BlackBoxKeychainStore: KeychainStoring {
         self.store = store
     }
 
-    func createProjectKeychain(path: String, password: String) throws {
-        try store.update { state in
-            state.projectKeychainCreations.append(BlackBoxProjectKeychainCreation(path: path, password: password))
-        }
-        try FileManager.default.createDirectory(
-            at: URL(fileURLWithPath: path).deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        FileManager.default.createFile(atPath: path, contents: Data())
-    }
-
     func useProject(config: ProjectConfig, projectRoot: URL) throws {}
-
-    func storeProjectKeychainPassword(service: String, password: String) throws {
-        try store.update { state in
-            state.projectPasswords.append(BlackBoxProjectPassword(service: service, password: password))
-        }
-    }
-
-    func storeGenericPassword(service: String, value: String) throws {
-        try store.update { state in
-            state.keychainItems[service] = value
-        }
-    }
-
-    func readGenericPassword(service: String) throws -> String {
-        let state = try store.read()
-        guard let value = state.keychainItems[service] else {
-            throw AgentKeychainError.filesystem("missing black-box keychain item: \(service)")
-        }
-        return value
-    }
-
-    func deleteGenericPassword(service: String) throws {
-        try store.update { state in
-            state.deletedServices.append(service)
-            state.keychainItems.removeValue(forKey: service)
-        }
-    }
-
-    func repairGenericPasswordAccess(service: String) throws {}
 
     func createRoleKeychain(path: String, password: String, ttlSeconds: Int) throws {
         try store.update { state in
@@ -259,18 +203,25 @@ private final class BlackBoxKeychainStore: KeychainStoring {
     }
 
     func storeGenericPassword(service: String, value: String, roleKeychain: RoleKeychainConfig) throws {
-        try storeGenericPassword(service: service, value: value)
+        try store.update { state in
+            state.keychainItems[service] = value
+        }
     }
 
     func readGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws -> String {
-        try readGenericPassword(service: service)
+        let state = try store.read()
+        guard let value = state.keychainItems[service] else {
+            throw AgentKeychainError.filesystem("missing black-box keychain item: \(service)")
+        }
+        return value
     }
 
     func deleteGenericPassword(service: String, roleKeychain: RoleKeychainConfig) throws {
-        try deleteGenericPassword(service: service)
+        try store.update { state in
+            state.deletedServices.append(service)
+            state.keychainItems.removeValue(forKey: service)
+        }
     }
-
-    func repairGenericPasswordAccess(service: String, roleKeychain: RoleKeychainConfig) throws {}
 }
 
 private final class BlackBoxSecretPrompt: SecretPrompting {

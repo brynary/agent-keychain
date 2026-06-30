@@ -24,15 +24,9 @@ Each project uses its own `.agent-keychain/` directory. Project discovery starts
 
 Use `--project PATH` when running commands from outside the project tree.
 
-## Project and Role Keychains
+## Role Keychains
 
-`agent-keychain` creates a project-specific keychain:
-
-```text
-.agent-keychain/keychains/project.keychain-db
-```
-
-The project keychain is retained for legacy projects and migration. New role-owned secrets and APFS sparsebundle passwords are stored in per-role keychains:
+Role-owned secrets and APFS sparsebundle passwords are stored in per-role keychains:
 
 ```text
 .agent-keychain/keychains/roles/<role>.keychain-db
@@ -62,8 +56,8 @@ The CLI enforces:
 - Volumes can only be unlocked by their owning role.
 - Browser profiles can only be opened by their owning role.
 - Single-resource use commands infer the owner role from trusted config.
-- Roles can require a reason.
 - Policy mutations require user presence and a reason.
+- Read/use commands may include a reason for audit context, but reasons are not required by role.
 
 Policy checks run before touching keychain items, disk images, browser profiles, or child processes where practical.
 
@@ -116,9 +110,9 @@ arguments that override the managed profile path, such as `--user-data-dir` and
 `--profile-directory`. If Chrome remote debugging is requested, the debugging
 address must be loopback (`127.0.0.1`, `localhost`, or `::1`).
 
-`browser path` resolves the managed Chrome profile path after normal owner inference,
-reason, and volume-unlock checks. It prints the path for external launchers and
-leaves the backing volume mounted.
+`browser path` resolves the managed Chrome profile path after normal owner inference
+and volume-unlock checks. It prints the path for external launchers and leaves the
+backing volume mounted.
 
 Profile paths are validated before volume attach and browser launch. Absolute paths, `~`, empty components, `.`, and `..` are rejected.
 
